@@ -39,7 +39,7 @@ public partial class MainWindow
                     var command = doc.RootElement.Clone();
                     await Dispatcher.InvokeAsync(async () =>
                     {
-                        try { await BridgeCommand(command); BridgeWrite(new { id = command.GetProperty("id").GetInt32(), ok = true }); }
+                        try { var result = await BridgeCommand(command); BridgeWrite(new { id = command.GetProperty("id").GetInt32(), ok = true, result }); }
                         catch (Exception error) { BridgeWrite(new { id = command.GetProperty("id").GetInt32(), ok = false, error = error.Message }); }
                     }).Task.Unwrap();
                 }
@@ -55,22 +55,61 @@ public partial class MainWindow
         lock (bridgeOutput) { try { bridgeOutput.WriteLine(JsonSerializer.Serialize(value)); } catch (IOException) { } }
     }
 
-    private object BridgeState() => new
+    private object BridgeState()
     {
-        busy = BridgeBusy,
-        phase = isCountingDown || isMacroCountingDown ? "countdown" : isPreparingRecording ? "preparing" : isRecording ? "recording" : isFinalizing ? "saving" : bridgeRun is not null || isMacroRunning ? "running" : "idle",
-        message = RecordingStatusText.Text, timer = RecordingTimerText.Text,
-        videoPath = !isRecording && !isFinalizing && !isPreparingRecording ? currentVideoPath : null,
-        projectPath = currentProjectPath, iteration = bridgeIteration, total = bridgeTotal,
-        width = captureWidth, height = captureHeight,
-        events = RecordedEvents.Select((item, index) => new { id = index, name = item.Category, detail = item.Message, at = item.Offset.TotalSeconds, result = item.LastExecutionResult, failed = item.LastExecutionFailed, executable = item.IsExecutable, x = item.ScreenX, y = item.ScreenY, text = item.ActionText, kind = item.ActionKind.ToString(), label = item.OverlayLabel, captureLeft = item.CaptureLeft, captureTop = item.CaptureTop, captureWidth = item.CaptureWidth, captureHeight = item.CaptureHeight }).ToArray()
+        var diagnostics = captureDiagnostics.Snapshot();
+        var phase = bridgeRun is not null || isMacroRunning
+            ? "running"
+            : isMacroCountingDown
+                ? "countdown"
+                : ToBridgePhase(diagnostics.Phase);
+        return new
+        {
+            busy = BridgeBusy,
+            phase,
+            captureReady = diagnostics.CaptureReady,
+            videoReady = diagnostics.VideoReady,
+            hookReady = diagnostics.HookReady,
+            rawInputCount = diagnostics.RawInputCount,
+            enqueuedCount = diagnostics.EnqueuedCount,
+            committedCount = diagnostics.CommittedCount,
+            rejectedCount = diagnostics.RejectedCount,
+            rejectionReasons = diagnostics.RejectionReasons,
+            lastInputAt = diagnostics.LastInputAt,
+            captureFailure = diagnostics.Failure,
+            sessionId = diagnostics.SessionId,
+            message = RecordingStatusText.Text, timer = RecordingTimerText.Text,
+            videoPath = !isRecording && !isFinalizing && !isPreparingRecording ? currentVideoPath : null,
+            projectPath = currentProjectPath, iteration = bridgeIteration, total = bridgeTotal,
+            width = captureWidth, height = captureHeight,
+            events = RecordedEvents.Select((item, index) => new { id = index, name = item.Category, detail = item.Message, at = item.Offset.TotalSeconds, result = item.LastExecutionResult, failed = item.LastExecutionFailed, executable = item.IsExecutable, x = item.ScreenX, y = item.ScreenY, text = item.ActionText, kind = item.ActionKind.ToString(), label = item.OverlayLabel, captureLeft = item.CaptureLeft, captureTop = item.CaptureTop, captureWidth = item.CaptureWidth, captureHeight = item.CaptureHeight }).ToArray()
+        };
+    }
+
+    private static string ToBridgePhase(RecordingCapturePhase phase) => phase switch
+    {
+        RecordingCapturePhase.VideoStarting => "video_starting",
+        RecordingCapturePhase.InputHookStarting => "input_hook_starting",
+        RecordingCapturePhase.CaptureReady => "capture_ready",
+        _ => phase.ToString().ToLowerInvariant(),
     };
 
-    private async Task BridgeCommand(JsonElement command)
+    private async Task<object?> BridgeCommand(JsonElement command)
     {
         var action = command.GetProperty("action").GetString();
-        if (action == "stop") { HandleEmergencyStop(); return; }
-        if (action == "state") { BridgeWrite(new { type = "state", state = BridgeState() }); return; }
+        if (action == "stop") { HandleEmergencyStop(); return null; }
+        if (action == "stop_recording")
+        {
+            if (isCountingDown) CancelRecordingCountdown();
+            else await StopRecordingAsync();
+            return null;
+        }
+        if (action == "reset_recording") { await ResetRecordingAsync(); return null; }
+        if (action == "state") { BridgeWrite(new { type = "state", state = BridgeState() }); return null; }
+        if (action == "observe_semantic") return SemanticUiBridge.Observe(command);
+        if (action == "focus_semantic_window") return SemanticUiBridge.Focus(command);
+        if (action == "capture_semantic_screen") return SemanticUiBridge.Capture(command);
+        if (action == "execute_semantic") return SemanticUiBridge.Execute(command);
         if (BridgeBusy) throw new InvalidOperationException("진행 중인 작업을 먼저 중지하세요.");
         switch (action)
         {
@@ -112,7 +151,7 @@ public partial class MainWindow
             case "record":
                 if (!emergencyHotkeyRegistered) throw new InvalidOperationException("긴급 정지 단축키 등록 실패: 다른 매크로 앱을 종료한 후 다시 실행하세요.");
                 StartRecordingButton_Click(this, new RoutedEventArgs());
-                break;
+                return await WaitForCaptureReadyAsync();
             case "run":
                 if (!emergencyHotkeyRegistered) throw new InvalidOperationException("긴급 정지 단축키 등록 실패: 다른 매크로 앱을 종료한 후 다시 실행하세요.");
                 if (!RecordedEvents.Any(item => item.IsExecutable)) throw new InvalidOperationException("실행할 행동 기록이 없습니다.");
@@ -165,6 +204,89 @@ public partial class MainWindow
                 break;
             default: throw new ArgumentException("지원하지 않는 명령입니다.");
         }
+        return null;
+    }
+
+    private async Task<object> WaitForCaptureReadyAsync()
+    {
+        var timeout = TimeSpan.FromSeconds(
+            GetSelectedStartDelaySeconds() + 25
+        );
+        using var timeoutSource = new CancellationTokenSource(timeout);
+        try
+        {
+            while (true)
+            {
+                timeoutSource.Token.ThrowIfCancellationRequested();
+                var diagnostics = captureDiagnostics.Snapshot();
+                if (diagnostics.CaptureReady && isRecording)
+                {
+                    return new
+                    {
+                        captureReady = true,
+                        videoReady = diagnostics.VideoReady,
+                        hookReady = diagnostics.HookReady,
+                        sessionId = diagnostics.SessionId,
+                    };
+                }
+                if (
+                    diagnostics.Phase == RecordingCapturePhase.Failed
+                    || diagnostics.Failure is not null
+                )
+                {
+                    throw new InvalidOperationException(
+                        diagnostics.Failure ?? "녹화 준비에 실패했습니다."
+                    );
+                }
+                if (
+                    diagnostics.Phase == RecordingCapturePhase.Idle
+                    && !BridgeBusy
+                )
+                {
+                    throw new InvalidOperationException(
+                        "녹화 준비가 완료되기 전에 중단되었습니다."
+                    );
+                }
+                await Task.Delay(50, timeoutSource.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            const string message =
+                "영상과 입력 이벤트가 제한 시간 안에 준비되지 않았습니다.";
+            StopRecordingAfterFailure(message);
+            throw new TimeoutException(message);
+        }
+    }
+
+    private async Task ResetRecordingAsync()
+    {
+        if (isCountingDown) CancelRecordingCountdown();
+        if (isRecording || isPreparingRecording) await StopRecordingAsync();
+        if (isFinalizing || isMacroRunning || isMacroCountingDown || bridgeRun is not null)
+            throw new InvalidOperationException("녹화나 실행이 끝난 뒤 초기화하세요.");
+
+        var videoPath = currentVideoPath;
+        var projectPath = currentProjectPath;
+        RecordedEvents.Clear();
+        currentVideoPath = null;
+        currentProjectPath = null;
+        currentProjectStatus = MacroProjectStatus.Completed;
+        projectRevision = 0;
+        lastCommittedProjectRevision = 0;
+        foreach (var path in new[]
+        {
+            videoPath,
+            projectPath,
+            videoPath is null ? null : MacroProjectStore.GetSidecarPath(videoPath),
+            videoPath is null ? null : videoPath + ".runs.jsonl"
+        }.Where(path => !string.IsNullOrWhiteSpace(path)).Distinct())
+        {
+            try { if (File.Exists(path)) File.Delete(path); }
+            catch (IOException error) { throw new InvalidOperationException($"기록 파일을 삭제하지 못했습니다: {error.Message}"); }
+        }
+        UpdateEventLogUi();
+        RecordingStatusText.Text = "기록 초기화 완료 · 새 기록을 시작하세요.";
     }
 
     private async Task BridgeRepeatAsync(CancellationTokenSource cancellation)

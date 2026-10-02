@@ -67,7 +67,10 @@ public partial class MainWindow : Window
     private readonly EventSimulator eventSimulator = new();
     private readonly SemaphoreSlim projectSaveGate = new(1, 1);
 
-    private SimpleGlobalHook? globalHook;
+    private readonly RecordingCaptureDiagnostics captureDiagnostics = new();
+    private Func<IInputCapture> inputCaptureFactory = () =>
+        new SharpHookInputCapture();
+    private IInputCapture? globalHook;
     private Task? globalHookRunTask;
     private TaskCompletionSource<bool>? globalHookReadySource;
     private EventHandler<HookEventArgs>? globalHookEnabledHandler;
@@ -288,6 +291,10 @@ public partial class MainWindow : Window
         }
 
         isCountingDown = true;
+        captureDiagnostics.Reset(
+            recordingSessionId + 1,
+            RecordingCapturePhase.Countdown
+        );
         countdownEndsAt = DateTimeOffset.Now.AddSeconds(delaySeconds);
         countdownTimer.Start();
         SetCountdownUi(delaySeconds);
@@ -314,6 +321,10 @@ public partial class MainWindow : Window
         isRecording = false;
         isFinalizing = false;
         recordingSessionId++;
+        captureDiagnostics.Reset(
+            recordingSessionId,
+            RecordingCapturePhase.VideoStarting
+        );
         SetPreparingRecordingUi();
         RecordingStatusText.Text = "기존 매크로를 안전하게 저장하고 있습니다…";
 
@@ -346,6 +357,7 @@ public partial class MainWindow : Window
         }
         catch (Exception exception)
         {
+            captureDiagnostics.Fail(exception.Message);
             StopGlobalHook();
             CompleteHookEventQueue();
             DisposeRecorder();
@@ -503,6 +515,9 @@ public partial class MainWindow : Window
             recordingSessionCommitted = true;
             UpdateEventLogUi();
 
+            captureDiagnostics.SetPhase(
+                RecordingCapturePhase.InputHookStarting
+            );
             hookEventQueue = new OrderedAsyncDrainQueue<HookEventSnapshot>(
                 DispatchHookEventAsync
             );
@@ -511,7 +526,7 @@ public partial class MainWindow : Window
             );
             globalHookReadySource = readySource;
 
-            var hook = new SimpleGlobalHook(runAsyncOnBackgroundThread: true);
+            var hook = inputCaptureFactory();
             var stopRequest = new CancellationTokenSource();
             globalHookStopRequest = stopRequest;
             EventHandler<HookEventArgs> hookEnabledHandler = (_, _) =>
@@ -559,17 +574,20 @@ public partial class MainWindow : Window
                 return;
             }
 
+            captureDiagnostics.SetHookReady(true);
             recordingClock.Restart();
             isPreparingRecording = false;
             isRecording = true;
             eventCaptureStarted = true;
             SetRecordingUi(true);
             recordingTimer.Start();
+            captureDiagnostics.SetPhase(RecordingCapturePhase.CaptureReady);
             AddEvent(
                 "시스템",
                 "화면 녹화와 이벤트 기록을 시작했습니다.",
                 TimeSpan.Zero
             );
+            captureDiagnostics.SetPhase(RecordingCapturePhase.Recording);
             recordingPreparationCancellation?.Cancel();
             _ = MonitorGlobalHookAsync(hook, hookRunTask, sessionId);
         }
@@ -592,7 +610,7 @@ public partial class MainWindow : Window
     }
 
     private async Task MonitorGlobalHookAsync(
-        SimpleGlobalHook hook,
+        IInputCapture hook,
         Task runTask,
         long sessionId
     )
@@ -631,6 +649,7 @@ public partial class MainWindow : Window
     {
         countdownTimer.Stop();
         isCountingDown = false;
+        captureDiagnostics.Fail("녹화 시작이 취소되었습니다.");
         SetRecordingUi(false);
         RecordingStatusText.Text = "녹화 시작이 취소되었습니다.";
     }
@@ -653,6 +672,7 @@ public partial class MainWindow : Window
         }
 
         isFinalizing = true;
+        captureDiagnostics.SetPhase(RecordingCapturePhase.Draining);
         recordingPreparationCancellation?.Cancel();
 
         StartRecordingButton.IsEnabled = false;
@@ -674,19 +694,26 @@ public partial class MainWindow : Window
         {
             await CompleteAndDrainHookEventQueueAsync();
         }
+
         catch (Exception exception)
         {
             shutdownErrors.Add(exception);
         }
 
+        captureDiagnostics.SetHookReady(false);
+        captureDiagnostics.SetPhase(RecordingCapturePhase.Saving);
+
         if (shutdownErrors.Count > 0)
         {
-            recordingFailureMessage =
+            var shutdownMessage =
                 "마지막 입력 감지를 정리하지 못했습니다: "
                 + string.Join(
                     " · ",
                     shutdownErrors.Select(error => error.GetBaseException().Message)
                 );
+            recordingFailureMessage = recordingFailureMessage is null
+                ? shutdownMessage
+                : $"{recordingFailureMessage} {shutdownMessage}";
         }
 
         isRecording = false;
@@ -772,12 +799,11 @@ public partial class MainWindow : Window
 
     private void GlobalHook_MousePressed(object? sender, MouseHookEventArgs e)
     {
-        if (
-            !isRecording
-            || !IsPointInsideCapture(e.Data.X, e.Data.Y)
-            || IsOwnProcessWindowAt(e.Data.X, e.Data.Y)
-        )
+        captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
+        var rejectionReason = GetPointerRejectionReason(e.Data.X, e.Data.Y);
+        if (rejectionReason is not null)
         {
+            captureDiagnostics.RecordRejected(rejectionReason);
             return;
         }
 
@@ -790,6 +816,7 @@ public partial class MainWindow : Window
         };
         if (actionKind == MacroActionKind.None)
         {
+            captureDiagnostics.RecordRejected("unsupported_mouse_button");
             return;
         }
 
@@ -809,8 +836,10 @@ public partial class MainWindow : Window
 
     private void GlobalHook_MouseDragged(object? sender, MouseHookEventArgs e)
     {
+        captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
         if (!isRecording)
         {
+            captureDiagnostics.RecordRejected("not_recording");
             return;
         }
 
@@ -839,11 +868,13 @@ public partial class MainWindow : Window
 
     private void GlobalHook_MouseReleased(object? sender, MouseHookEventArgs e)
     {
+        captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
         PendingMousePress? pending;
         lock (pendingMouseGate)
         {
             if (!pendingMousePresses.Remove(e.Data.Button, out pending))
             {
+                captureDiagnostics.RecordRejected("unmatched_mouse_release");
                 return;
             }
         }
@@ -853,6 +884,7 @@ public partial class MainWindow : Window
             || pending.SessionId != recordingSessionId
         )
         {
+            captureDiagnostics.RecordRejected("stale_session");
             return;
         }
 
@@ -895,12 +927,11 @@ public partial class MainWindow : Window
 
     private void GlobalHook_MouseWheel(object? sender, MouseWheelHookEventArgs e)
     {
-        if (
-            !isRecording
-            || !IsPointInsideCapture(e.Data.X, e.Data.Y)
-            || IsOwnProcessWindowAt(e.Data.X, e.Data.Y)
-        )
+        captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
+        var rejectionReason = GetPointerRejectionReason(e.Data.X, e.Data.Y);
+        if (rejectionReason is not null)
         {
+            captureDiagnostics.RecordRejected(rejectionReason);
             return;
         }
 
@@ -931,8 +962,10 @@ public partial class MainWindow : Window
 
     private void GlobalHook_KeyPressed(object? sender, KeyboardHookEventArgs e)
     {
+        captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
         if (!isRecording)
         {
+            captureDiagnostics.RecordRejected("not_recording");
             return;
         }
 
@@ -951,6 +984,11 @@ public partial class MainWindow : Window
             || !IsForegroundInputInsideCapture()
         )
         {
+            captureDiagnostics.RecordRejected(
+                IsModifier(e.Data.KeyCode)
+                    ? "modifier_only"
+                    : "foreground_outside_capture"
+            );
             return;
         }
 
@@ -981,6 +1019,7 @@ public partial class MainWindow : Window
 
     private void GlobalHook_KeyReleased(object? sender, KeyboardHookEventArgs e)
     {
+        captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
         lock (pressedKeys)
         {
             pressedKeys.Remove(e.Data.KeyCode);
@@ -990,6 +1029,19 @@ public partial class MainWindow : Window
     private bool IsEmergencyStopPressed()
     {
         return IsEmergencyStopKeyChord(pressedKeys);
+    }
+
+    private string? GetPointerRejectionReason(int x, int y)
+    {
+        if (!isRecording)
+        {
+            return "not_recording";
+        }
+        if (!IsPointInsideCapture(x, y))
+        {
+            return "outside_capture";
+        }
+        return IsOwnProcessWindowAt(x, y) ? "own_process_window" : null;
     }
 
     private static bool IsEmergencyStopKeyChord(
@@ -1131,10 +1183,11 @@ public partial class MainWindow : Window
         var queue = hookEventQueue;
         if (queue is null)
         {
+            captureDiagnostics.RecordRejected("queue_unavailable");
             return;
         }
 
-        _ = queue.TryEnqueue(
+        var enqueued = queue.TryEnqueue(
             new HookEventSnapshot(
                 recordingSessionId,
                 explicitOffset ?? recordingClock.Elapsed,
@@ -1163,6 +1216,14 @@ public partial class MainWindow : Window
                 mousePath?.ToArray() ?? []
             )
         );
+        if (enqueued)
+        {
+            captureDiagnostics.RecordEnqueued();
+        }
+        else
+        {
+            captureDiagnostics.RecordRejected("queue_closed");
+        }
     }
 
     private ValueTask DispatchHookEventAsync(HookEventSnapshot snapshot)
@@ -1182,6 +1243,7 @@ public partial class MainWindow : Window
             || !isRecording
         )
         {
+            captureDiagnostics.RecordRejected("stale_or_stopped_before_commit");
             return;
         }
 
@@ -1211,6 +1273,7 @@ public partial class MainWindow : Window
             snapshot.DragDuration,
             snapshot.MousePath
         );
+        captureDiagnostics.RecordCommitted();
     }
 
     private void AddEvent(
@@ -3097,6 +3160,14 @@ public partial class MainWindow : Window
                 DisposeRecorder();
                 if (committed)
                 {
+                    if (
+                        recordingFailureMessage is null
+                        && RecordedEvents.Count == 0
+                    )
+                    {
+                        recordingFailureMessage =
+                            "입력 캡처 준비 이벤트가 없어 녹화를 완료할 수 없습니다.";
+                    }
                     currentProjectStatus = recordingFailureMessage is null
                         ? MacroProjectStatus.Completed
                         : MacroProjectStatus.Failed;
@@ -3107,6 +3178,19 @@ public partial class MainWindow : Window
                     }
                     LoadRecordedVideo(e.FilePath);
                     var saved = await SaveCurrentProjectAsync();
+                    if (saved && recordingFailureMessage is null)
+                    {
+                        captureDiagnostics.SetPhase(
+                            RecordingCapturePhase.Completed
+                        );
+                    }
+                    else
+                    {
+                        captureDiagnostics.Fail(
+                            recordingFailureMessage
+                                ?? "매크로 프로젝트 저장에 실패했습니다."
+                        );
+                    }
                     RecordingStatusText.Text = saved
                         ? recordingFailureMessage is null
                             ? $"영상과 {RecordedEvents.Count}개 이벤트를 저장했습니다."
@@ -3174,6 +3258,7 @@ public partial class MainWindow : Window
 
             if (e.Status == RecorderStatus.Recording)
             {
+                captureDiagnostics.SetVideoReady(true);
                 BeginEventCapture();
             }
             else if (e.Status == RecorderStatus.Finishing && isFinalizing)
@@ -3189,6 +3274,7 @@ public partial class MainWindow : Window
 
     private void StopRecordingAfterFailure(string message)
     {
+        captureDiagnostics.Fail(message);
         recordingFailureMessage = message;
         if (
             recorder is not null
@@ -3207,6 +3293,7 @@ public partial class MainWindow : Window
 
     private void CompleteWithFailure(string message)
     {
+        captureDiagnostics.Fail(message);
         CleanupRecordingCapture();
         isFinalizing = false;
         pendingVideoPath = null;
@@ -3234,6 +3321,7 @@ public partial class MainWindow : Window
         eventCaptureStarted = false;
         recordingClock.Stop();
         recordingTimer.Stop();
+        captureDiagnostics.SetHookReady(false);
         StopGlobalHook();
         CompleteHookEventQueue();
         lock (pendingMouseGate)
@@ -4145,7 +4233,7 @@ public partial class MainWindow : Window
     }
 
     private void DetachGlobalHookHandlers(
-        SimpleGlobalHook hook,
+        IInputCapture hook,
         EventHandler<HookEventArgs>? hookEnabledHandler
     )
     {
