@@ -103,8 +103,11 @@ internal static class SemanticUiBridge
                 || processHint.Contains(processName, StringComparison.Ordinal);
             if (!processMatches) continue;
             var score = string.IsNullOrEmpty(processHint) ? 0 : 10;
-            if (!string.IsNullOrEmpty(titleHint) && (title.Contains(titleHint, StringComparison.Ordinal) || titleHint.Contains(title, StringComparison.Ordinal))) score += 5;
+            var windowTitleMatches = !string.IsNullOrEmpty(titleHint)
+                && (title.Contains(titleHint, StringComparison.Ordinal) || titleHint.Contains(title, StringComparison.Ordinal));
+            if (windowTitleMatches) score += title == titleHint ? 9 : 5;
             AutomationElement? matchingTab = null;
+            var matchingTabScore = 0;
             if (!string.IsNullOrEmpty(titleHint) || contentHints.Length > 0)
             {
                 var tabs = window.FindAll(
@@ -119,11 +122,16 @@ internal static class SemanticUiBridge
                     var titleMatches = !string.IsNullOrEmpty(titleHint) && (tabName.Contains(titleHint, StringComparison.Ordinal) || titleHint.Contains(tabName, StringComparison.Ordinal));
                     var contentMatches = contentHints.Any(hint => tabName.Contains(hint, StringComparison.Ordinal) || hint.Contains(tabName, StringComparison.Ordinal));
                     if (!titleMatches && !contentMatches) continue;
+                    var tabScore = titleMatches
+                        ? tabName == titleHint ? 9 : 5
+                        : 4;
+                    if (tabScore <= matchingTabScore) continue;
                     matchingTab = tab;
-                    score += titleMatches ? 5 : 4;
-                    break;
+                    matchingTabScore = tabScore;
                 }
+                score += matchingTabScore;
             }
+            if (!windowTitleMatches && matchingTab is null && (!string.IsNullOrEmpty(titleHint) || contentHints.Length > 0)) continue;
             if (score <= bestScore) continue;
             best = window;
             bestTab = matchingTab;
