@@ -110,6 +110,8 @@ public partial class MainWindow
         if (action == "focus_semantic_window") return SemanticUiBridge.Focus(command);
         if (action == "capture_semantic_screen") return SemanticUiBridge.Capture(command);
         if (action == "execute_semantic") return SemanticUiBridge.Execute(command);
+        if (action == "run_google_sheets_golden_path")
+            return new GoogleSheetsGoldenPathRunner().Run(new GoogleSheetsWindowsSurface());
         if (BridgeBusy) throw new InvalidOperationException("진행 중인 작업을 먼저 중지하세요.");
         switch (action)
         {
