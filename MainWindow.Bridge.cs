@@ -40,7 +40,7 @@ public partial class MainWindow
                     await Dispatcher.InvokeAsync(async () =>
                     {
                         try { var result = await BridgeCommand(command); BridgeWrite(new { id = command.GetProperty("id").GetInt32(), ok = true, result }); }
-                        catch (Exception error) { BridgeWrite(new { id = command.GetProperty("id").GetInt32(), ok = false, error = error.Message }); }
+                        catch (Exception error) { BridgeWrite(new { id = command.GetProperty("id").GetInt32(), ok = false, error = error.Message, errorType = error.GetType().FullName }); }
                     }).Task.Unwrap();
                 }
                 catch (Exception error) { BridgeWrite(new { type = "error", error = error.Message }); }
@@ -111,7 +111,16 @@ public partial class MainWindow
         if (action == "capture_semantic_screen") return SemanticUiBridge.Capture(command);
         if (action == "execute_semantic") return SemanticUiBridge.Execute(command);
         if (action == "run_google_sheets_golden_path")
-            return new GoogleSheetsGoldenPathRunner().Run(new GoogleSheetsWindowsSurface());
+        {
+            IReadOnlyList<int>? appliedBounds = null;
+            if (command.TryGetProperty("window_bounds", out var requestedBounds))
+            {
+                var values = requestedBounds.EnumerateArray().Select(value => value.GetInt32()).ToArray();
+                if (values.Length != 4) throw new ArgumentException("window_bounds requires x, y, width, height.");
+                appliedBounds = GoogleSheetsWindowsSurface.SetForegroundChromeBounds(values[0], values[1], values[2], values[3]);
+            }
+            return new GoogleSheetsGoldenPathRunner().Run(new GoogleSheetsWindowsSurface()) with { InitialWindowBounds = appliedBounds };
+        }
         if (BridgeBusy) throw new InvalidOperationException("진행 중인 작업을 먼저 중지하세요.");
         switch (action)
         {

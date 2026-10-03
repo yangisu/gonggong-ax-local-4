@@ -293,6 +293,7 @@ internal static class SemanticUiBridge
             enabled = element.Current.IsEnabled,
             offscreen = element.Current.IsOffscreen,
             password = element.Current.IsPassword,
+            patterns = element.GetSupportedPatterns().Select(pattern => pattern.ProgrammaticName).ToArray(),
             bounds = new[] { rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom },
         };
     }

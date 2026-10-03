@@ -8,6 +8,8 @@ public sealed class GoogleSheetsGoldenPathTests
     [Fact]
     public void Compiler_BindsNaturalLanguageAndEveryGoldenPathStepToEvidence()
     {
+        var video = Path.GetTempFileName();
+        File.WriteAllBytes(video, [1, 2, 3, 4]);
         var events = Enumerable.Range(0, 4).Select(index => new DemonstrationInputEvent(index, index + .5, "MouseLeftClick")).ToArray();
         var screens = Enumerable.Range(0, 4).Select(index => new DemonstrationScreenEvidence($"f{index}", index + .5, [$"state-{index}"])).ToArray();
         var links = new[]
@@ -17,21 +19,32 @@ public sealed class GoogleSheetsGoldenPathTests
             new WorkflowEvidenceLink("create-blank-spreadsheet", [2], ["f2"]),
             new WorkflowEvidenceLink("close-created-spreadsheet-tab", [3], ["f3"]),
         };
-        var workflow = GoogleSheetsWorkflowCompiler.Compile("Google Sheets에서 빈 스프레드시트를 만들고 탭을 닫아줘", 5, events, screens, links);
-        Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
-        Assert.Equal(4, workflow.Steps.Count);
-        Assert.All(workflow.Steps, step => Assert.NotEmpty(step.Evidence.ScreenEvidenceIds));
+        try
+        {
+            var workflow = GoogleSheetsWorkflowCompiler.Compile("Google Sheets에서 빈 스프레드시트를 만들고 탭을 닫아줘", video, 5, events, screens, links);
+            Assert.Equal("9f64a747e1b97f131fabb6b447296c9b6f0201e79fb3c5356e6c77e89b6a806a", workflow.SourceVideoSha256);
+            Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
+            Assert.Equal(4, workflow.Steps.Count);
+            Assert.All(workflow.Steps, step => Assert.NotEmpty(step.Evidence.ScreenEvidenceIds));
+        }
+        finally { File.Delete(video); }
     }
 
     [Fact]
     public void Compiler_RejectsMissingGoldenPathEvidenceLink()
     {
-        var error = Assert.Throws<InvalidOperationException>(() => GoogleSheetsWorkflowCompiler.Compile(
-            "빈 스프레드시트를 만들어줘", 2,
-            [new(0, 1, "MouseLeftClick")],
-            [new("f0", 1, ["Google apps"])],
-            [new("open-google-apps-menu", [0], ["f0"])]));
-        Assert.Contains("모든 실행 단계", error.Message);
+        var video = Path.GetTempFileName();
+        File.WriteAllBytes(video, [1]);
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(() => GoogleSheetsWorkflowCompiler.Compile(
+                "빈 스프레드시트를 만들어줘", video, 2,
+                [new(0, 1, "MouseLeftClick")],
+                [new("f0", 1, ["Google apps"])],
+                [new("open-google-apps-menu", [0], ["f0"])]));
+            Assert.Contains("모든 실행 단계", error.Message);
+        }
+        finally { File.Delete(video); }
     }
 
     [Fact]
@@ -92,11 +105,40 @@ public sealed class GoogleSheetsGoldenPathTests
         Assert.Equal(0, surface.ExecutionCount);
     }
 
+    [Fact]
+    public void NamedExistingSpreadsheet_IsNeverMistakenForCreatedBlankDocument()
+    {
+        var observation = new GoogleSheetsObservation("chrome",
+        [
+            new("budget", "2026 Budget - Google Sheets", "https://docs.google.com/spreadsheets/d/existing/edit", true),
+        ], [new("sheet", "button", "Sheet1")], 1);
+        var surface = new StaticSurface(observation);
+        var result = new GoogleSheetsGoldenPathRunner().Run(surface);
+        Assert.Equal("ABSTAINED", result.Status);
+        Assert.Equal(0, surface.ExecutionCount);
+    }
+
+    [Fact]
+    public void ObservationFailure_IsReturnedWithAuditableJournal()
+    {
+        var result = new GoogleSheetsGoldenPathRunner().Run(new ThrowingSurface());
+        Assert.Equal("OBSERVATION_FAILED", result.Status);
+        Assert.Single(result.Journal);
+        Assert.Equal("observation", result.Journal[0].Phase);
+        Assert.Contains("accessibility changed", result.Journal[0].Observation);
+    }
+
     private sealed class StaticSurface(GoogleSheetsObservation observation) : IGoogleSheetsSurface
     {
         public int ExecutionCount { get; private set; }
         public GoogleSheetsObservation Observe() => observation;
         public void Execute(GoldenPathAction action, GoogleSheetsObservation before) => ExecutionCount++;
+    }
+
+    private sealed class ThrowingSurface : IGoogleSheetsSurface
+    {
+        public GoogleSheetsObservation Observe() => throw new InvalidOperationException("accessibility changed");
+        public void Execute(GoldenPathAction action, GoogleSheetsObservation before) => throw new NotSupportedException();
     }
 
     [Fact]
@@ -225,11 +267,11 @@ public sealed class GoogleSheetsGoldenPathTests
                 case GoogleSheetsState.AppsMenuOpen:
                     tabs = [new(sourceTab, "Google", "https://www.google.com/", true), new("other", "Mail", "https://mail.google.com/", false)];
                     elements.Add(new("menu", "menu", "Google apps"));
-                    elements.Add(new("sheets", "link", "Sheets"));
+                    elements.Add(new("sheets", "link", "Sheets", Offscreen: variant == 9));
                     break;
                 case GoogleSheetsState.SheetsHome:
                     tabs = [new(sourceTab, "Google Sheets", "https://docs.google.com/spreadsheets/u/0/", true), new("other", "Mail", "https://mail.google.com/", false)];
-                    elements.Add(new("blank", "button", "Blank spreadsheet"));
+                    elements.Add(new("blank", "button", "Blank spreadsheet", Offscreen: variant == 8));
                     break;
                 case GoogleSheetsState.BlankSpreadsheetOpen:
                     tabs = variant % 2 == 0

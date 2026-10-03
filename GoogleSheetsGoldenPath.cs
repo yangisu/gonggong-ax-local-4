@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.IO;
 
 namespace Series4.Desktop;
 
@@ -37,6 +39,7 @@ public sealed record GoogleSheetsWorkflowStepDefinition(
 
 public sealed record GoogleSheetsWorkflowDefinition(
     string NaturalLanguageIntent,
+    string SourceVideoSha256,
     DemonstrationValidationResult EvidenceCoverage,
     IReadOnlyList<GoogleSheetsWorkflowStepDefinition> Steps);
 
@@ -52,6 +55,7 @@ public static class GoogleSheetsWorkflowCompiler
 
     public static GoogleSheetsWorkflowDefinition Compile(
         string naturalLanguageIntent,
+        string videoPath,
         double videoDurationSeconds,
         IReadOnlyList<DemonstrationInputEvent> events,
         IReadOnlyList<DemonstrationScreenEvidence> screens,
@@ -60,13 +64,21 @@ public static class GoogleSheetsWorkflowCompiler
         var intent = naturalLanguageIntent?.Trim() ?? string.Empty;
         if (intent.Length is < 3 or > 2000 || !(intent.Contains("스프레드시트", StringComparison.OrdinalIgnoreCase) || intent.Contains("sheet", StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("자연어 의도에서 Google Sheets 빈 문서 생성 목표를 확인할 수 없습니다.");
+        if (string.IsNullOrWhiteSpace(videoPath) || !File.Exists(videoPath))
+            throw new InvalidOperationException("원본 시연 영상 파일이 없습니다.");
+        var videoInfo = new FileInfo(videoPath);
+        if (videoInfo.Length is < 1 or > 500 * 1024 * 1024)
+            throw new InvalidOperationException("원본 시연 영상 크기가 허용 범위를 벗어났습니다.");
+        string videoSha256;
+        using (var stream = File.OpenRead(videoPath))
+            videoSha256 = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
         var expectedIds = Template.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
         var actualIds = links.Select(item => item.StepId).ToHashSet(StringComparer.Ordinal);
         if (!expectedIds.SetEquals(actualIds) || links.Count != Template.Length)
             throw new InvalidOperationException("골든 패스의 모든 실행 단계가 녹화 근거와 연결되어야 합니다.");
         var coverage = DemonstrationEvidenceValidator.Validate(videoDurationSeconds, events, screens, links);
         var byId = links.ToDictionary(item => item.StepId, StringComparer.Ordinal);
-        return new GoogleSheetsWorkflowDefinition(intent, coverage, Template.Select(item =>
+        return new GoogleSheetsWorkflowDefinition(intent, videoSha256, coverage, Template.Select(item =>
             new GoogleSheetsWorkflowStepDefinition(item.Id, item.From, item.To, item.Precondition, item.Success, byId[item.Id])).ToArray());
     }
 }
@@ -156,7 +168,8 @@ public sealed record GoogleSheetsObservation(
     string ProcessName,
     IReadOnlyList<BrowserTab> Tabs,
     IReadOnlyList<SemanticElement> Elements,
-    long Revision)
+    long Revision,
+    string WindowTitle = "")
 {
     public BrowserTab? ActiveTab
     {
@@ -187,7 +200,11 @@ public sealed record GoldenPathJournalEntry(
     string Execution,
     string Verification);
 
-public sealed record GoldenPathRunResult(string Status, GoogleSheetsState State, IReadOnlyList<GoldenPathJournalEntry> Journal)
+public sealed record GoldenPathRunResult(
+    string Status,
+    GoogleSheetsState State,
+    IReadOnlyList<GoldenPathJournalEntry> Journal,
+    IReadOnlyList<int>? InitialWindowBounds = null)
 {
     public string ToJson() => JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
 }
@@ -213,7 +230,13 @@ public sealed class GoogleSheetsGoldenPathRunner
 
         for (var transition = 0; transition < maximumTransitions; transition++)
         {
-            var before = surface.Observe();
+            GoogleSheetsObservation before;
+            try { before = surface.Observe(); }
+            catch (Exception error)
+            {
+                journal.Add(ObservationFailure("state-detection", error));
+                return new GoldenPathRunResult("OBSERVATION_FAILED", GoogleSheetsState.Unknown, journal);
+            }
             var classified = Classify(before, sourceTabId, createdTabId);
             if (!IsChrome(before))
                 return Stop("ABSTAINED", classified, "foreground process is not Chrome", before, [], journal);
@@ -239,13 +262,13 @@ public sealed class GoogleSheetsGoldenPathRunner
                 case GoogleSheetsState.AppsMenuOpen:
                     sourceTabId ??= active.Id;
                     stepId = SheetsHomeStep;
-                    candidates = Exact(before, new[] { "link", "hyperlink", "menuitem", "button" }, new[] { "Sheets", "스프레드시트", "Google Sheets" });
+                    candidates = Exact(before, new[] { "link", "hyperlink", "menuitem", "button", "listitem" }, new[] { "Sheets", "스프레드시트", "Google Sheets" }, includeOffscreen: true);
                     action = UniqueClick(stepId, "Sheets 열기", candidates);
                     break;
                 case GoogleSheetsState.SheetsHome:
                     sourceTabId ??= active.Id;
                     stepId = BlankSheetStep;
-                    candidates = Exact(before, new[] { "button", "link", "hyperlink", "listitem", "custom" }, new[] { "Blank spreadsheet", "빈 스프레드시트", "Blank" });
+                    candidates = Exact(before, new[] { "button", "link", "hyperlink", "listitem", "custom" }, new[] { "Blank spreadsheet", "빈 스프레드시트", "Blank" }, includeOffscreen: true);
                     action = UniqueClick(stepId, "빈 스프레드시트 만들기", candidates);
                     break;
                 case GoogleSheetsState.BlankSpreadsheetOpen:
@@ -276,13 +299,24 @@ public sealed class GoogleSheetsGoldenPathRunner
             }
 
             var expected = Successor(classified);
-            var after = surface.Observe();
+            GoogleSheetsObservation after;
+            try { after = surface.Observe(); }
+            catch (Exception error)
+            {
+                journal.Add(ObservationFailure(stepId, error));
+                return new GoldenPathRunResult("OBSERVATION_FAILED", classified, journal);
+            }
             var nextState = Classify(after, sourceTabId, createdTabId);
             var observationAttempt = 1;
             while (nextState != expected && observationAttempt < verificationAttempts)
             {
                 if (delay > TimeSpan.Zero) Thread.Sleep(delay);
-                after = surface.Observe();
+                try { after = surface.Observe(); }
+                catch (Exception error)
+                {
+                    journal.Add(ObservationFailure(stepId, error));
+                    return new GoldenPathRunResult("OBSERVATION_FAILED", nextState, journal);
+                }
                 nextState = Classify(after, sourceTabId, createdTabId);
                 observationAttempt++;
             }
@@ -291,7 +325,13 @@ public sealed class GoogleSheetsGoldenPathRunner
             if (!verified)
                 return new GoldenPathRunResult("VERIFICATION_FAILED", nextState, journal);
         }
-        var last = surface.Observe();
+        GoogleSheetsObservation last;
+        try { last = surface.Observe(); }
+        catch (Exception error)
+        {
+            journal.Add(ObservationFailure("transition-limit", error));
+            return new GoldenPathRunResult("OBSERVATION_FAILED", GoogleSheetsState.Unknown, journal);
+        }
         return Stop("TRANSITION_LIMIT", Classify(last, sourceTabId, createdTabId), "transition budget exhausted", last, [], journal);
     }
 
@@ -301,7 +341,7 @@ public sealed class GoogleSheetsGoldenPathRunner
         var createdStillOpen = createdTabId is not null && observation.Tabs.Any(tab => tab.Id == createdTabId);
         if (createdTabId is not null && !createdStillOpen && observation.Tabs.Any(tab => tab.Active))
             return GoogleSheetsState.CreatedSpreadsheetTabClosed;
-        if (IsSpreadsheetEdit(active) && HasAny(observation, "grid", "textbox", "formula bar", "수식 입력줄"))
+        if (IsSpreadsheetEdit(active) && IsUntitledSpreadsheet(active) && HasAny(observation, "grid", "textbox", "formula bar", "수식 입력줄", "시트1", "Sheet1"))
             return GoogleSheetsState.BlankSpreadsheetOpen;
         if (IsSheetsHome(active) && HasExact(observation, "Blank spreadsheet", "빈 스프레드시트", "Blank"))
             return GoogleSheetsState.SheetsHome;
@@ -316,11 +356,14 @@ public sealed class GoogleSheetsGoldenPathRunner
     private static bool IsGoogleHome(BrowserTab tab) => Uri.TryCreate(tab.Url, UriKind.Absolute, out var uri) && uri.Host is "www.google.com" or "google.com";
     private static bool IsSheetsHome(BrowserTab tab) => Uri.TryCreate(tab.Url, UriKind.Absolute, out var uri) && uri.Host == "docs.google.com" && uri.AbsolutePath.StartsWith("/spreadsheets", StringComparison.Ordinal) && !uri.AbsolutePath.Contains("/d/", StringComparison.Ordinal) && !uri.AbsolutePath.Contains("/create", StringComparison.Ordinal);
     private static bool IsSpreadsheetEdit(BrowserTab tab) => Uri.TryCreate(tab.Url, UriKind.Absolute, out var uri) && uri.Host == "docs.google.com" && uri.AbsolutePath.Contains("/spreadsheets/d/", StringComparison.Ordinal);
-    private static bool HasExact(GoogleSheetsObservation observation, params string[] names) => Exact(observation, ["button", "link", "hyperlink", "menuitem", "listitem", "custom"], names).Count > 0;
+    private static bool IsUntitledSpreadsheet(BrowserTab tab) =>
+        tab.Title.Contains("제목 없는 스프레드시트", StringComparison.OrdinalIgnoreCase)
+        || tab.Title.Contains("Untitled spreadsheet", StringComparison.OrdinalIgnoreCase);
+    private static bool HasExact(GoogleSheetsObservation observation, params string[] names) => Exact(observation, ["button", "link", "hyperlink", "menuitem", "listitem", "custom"], names, includeOffscreen: true).Count > 0;
     private static bool HasAny(GoogleSheetsObservation observation, params string[] values) => observation.Elements.Any(item => values.Any(value => item.Role.Contains(value, StringComparison.OrdinalIgnoreCase) || item.Name.Contains(value, StringComparison.OrdinalIgnoreCase)));
 
-    private static IReadOnlyList<SemanticElement> Exact(GoogleSheetsObservation observation, IReadOnlyList<string> roles, IReadOnlyList<string> names) =>
-        observation.Elements.Where(element => element.Enabled && !element.Offscreen && !element.Password && roles.Any(role => string.Equals(role, element.Role, StringComparison.OrdinalIgnoreCase)) && names.Any(name => string.Equals(name, element.Name, StringComparison.OrdinalIgnoreCase))).ToArray();
+    private static IReadOnlyList<SemanticElement> Exact(GoogleSheetsObservation observation, IReadOnlyList<string> roles, IReadOnlyList<string> names, bool includeOffscreen = false) =>
+        observation.Elements.Where(element => element.Enabled && (includeOffscreen || !element.Offscreen) && !element.Password && roles.Any(role => string.Equals(role, element.Role, StringComparison.OrdinalIgnoreCase)) && names.Any(name => string.Equals(name, element.Name, StringComparison.OrdinalIgnoreCase))).ToArray();
 
     private static GoldenPathAction? UniqueClick(string stepId, string description, IReadOnlyList<SemanticElement> candidates) =>
         candidates.Count == 1 ? new GoldenPathAction(stepId, "click", candidates[0].Id, description) : null;
@@ -341,5 +384,11 @@ public sealed class GoogleSheetsGoldenPathRunner
     }
 
     private static GoldenPathJournalEntry Entry(string stepId, string phase, GoogleSheetsState state, GoogleSheetsObservation observation, IReadOnlyList<string> candidates, string decision, string execution, string verification) =>
-        new(DateTimeOffset.UtcNow, stepId, phase, state, $"revision={observation.Revision}; active={observation.ActiveTab?.Title}; url={observation.ActiveTab?.Url}", candidates, decision, execution, verification);
+        new(DateTimeOffset.UtcNow, stepId, phase, state,
+            $"revision={observation.Revision}; process={observation.ProcessName}; window={observation.WindowTitle}; active={observation.ActiveTab?.Title}; url={observation.ActiveTab?.Url}; tabs=[{string.Join(" | ", observation.Tabs.Select(tab => $"{tab.Title} (active={tab.Active})"))}]",
+            candidates, decision, execution, verification);
+
+    private static GoldenPathJournalEntry ObservationFailure(string stepId, Exception error) =>
+        new(DateTimeOffset.UtcNow, stepId, "observation", GoogleSheetsState.Unknown,
+            $"errorType={error.GetType().FullName}; message={error.Message}", [], "stop", "not-run", "not-run");
 }
