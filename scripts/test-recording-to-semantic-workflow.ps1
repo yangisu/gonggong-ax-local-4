@@ -2,7 +2,7 @@ param(
     [string]$OutputDirectory = "artifacts/recording-to-semantic-workflow",
     [string]$EnginePath = "",
     [string]$FixturePath = "",
-    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus", "reorder", "canvas")]
+    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus", "reorder", "canvas", "vision", "vision-click", "vision-ambiguous", "vision-runtime-ambiguous")]
     [string]$Scenario = "text"
 )
 
@@ -75,6 +75,10 @@ try {
         "korean" { "korean-demo" }
         "reorder" { "reorder-demo" }
         "canvas" { "canvas-demo" }
+        "vision" { "vision-demo" }
+        "vision-click" { "vision-click-demo" }
+        "vision-ambiguous" { "vision-ambiguous-demo" }
+        "vision-runtime-ambiguous" { "vision-demo" }
         default { "editor-demo" }
     }
     $intent = switch ($Scenario) {
@@ -86,6 +90,10 @@ try {
         "korean" { "메모에 회의록이라고 입력해 줘" }
         "reorder" { "업무 B를 목록 마지막으로 이동해 줘" }
         "canvas" { "도형을 작업 영역 오른쪽으로 이동해 줘" }
+        "vision" { "영상에서 본 파란 도형을 오른쪽으로 이동해 줘" }
+        "vision-click" { "영상에서 본 파란 버튼을 눌러 줘" }
+        "vision-ambiguous" { "왼쪽 파란 도형을 오른쪽으로 이동해 줘" }
+        "vision-runtime-ambiguous" { "영상에서 본 파란 도형을 오른쪽으로 이동해 줘" }
         default { "새 메모를 만들고 meeting을 입력해 줘" }
     }
     $expectedAction = switch ($Scenario) {
@@ -96,6 +104,10 @@ try {
         "focus" { "focus" }
         "reorder" { "reorder-item" }
         "canvas" { "drag-within" }
+        "vision" { "visual-drag" }
+        "vision-click" { "visual-click" }
+        "vision-ambiguous" { "rejected" }
+        "vision-runtime-ambiguous" { "visual-drag" }
         default { "type" }
     }
     $demonstration = Start-Process -FilePath $FixturePath -ArgumentList $demonstrationMode -PassThru
@@ -104,6 +116,36 @@ try {
     Start-Sleep -Seconds 2
 
     $workflowPath = Join-Path $output "recorded-$Scenario.workflow.json"
+    if ($Scenario -eq "vision-ambiguous") {
+        $rejection = $null
+        try {
+            [void](Invoke-BridgeCommand @{
+                action = "compile_current_semantic_workflow"
+                intent = $intent
+                workflow_path = $workflowPath
+            } 30)
+        }
+        catch {
+            $rejection = $_.Exception.Message
+        }
+        if (-not $rejection -or $rejection -notmatch '드래그 의미 증거|시각 대상') {
+            throw "복수 시각 후보 녹화가 안전하게 거부되지 않았습니다: $rejection"
+        }
+        $summary = [ordered]@{
+            executedAt = [DateTimeOffset]::Now
+            scenario = $Scenario
+            source = "actual ScreenRecorderLib MP4 + SharpHook drag + two indistinguishable pixel targets"
+            recordedEventCount = $script:lastState.events.Count
+            compileStatus = "REJECTED"
+            rejection = $rejection
+            replayStarted = $false
+            wrongTargetExecutions = 0
+            passed = $true
+        }
+        $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")
+        $summary | ConvertTo-Json -Depth 8
+        return
+    }
     $compiled = Invoke-BridgeCommand @{
         action = "compile_current_semantic_workflow"
         intent = $intent
@@ -122,6 +164,9 @@ try {
     if ($workflowDocument.steps[0].action.kind -ne $expectedAction) {
         throw "녹화 동작이 기대한 의미 단계($expectedAction)로 추출되지 않았습니다."
     }
+    if ($Scenario -in @("vision", "vision-click", "vision-runtime-ambiguous") -and -not $workflowDocument.steps[0].action.target.visualAnchor.grayBase64) {
+        throw "영상 동기 시각 대상 템플릿이 Workflow에 보존되지 않았습니다."
+    }
 
     if ($demonstration -and -not $demonstration.HasExited) {
         $demonstration.CloseMainWindow() | Out-Null
@@ -136,6 +181,9 @@ try {
         "korean" { "korean" }
         "reorder" { "reorder" }
         "canvas" { "canvas" }
+        "vision" { "vision" }
+        "vision-click" { "vision-click" }
+        "vision-runtime-ambiguous" { "vision-duplicate" }
         default { "editor" }
     }
     $replay = Start-Process -FilePath $FixturePath -ArgumentList $replayMode -PassThru
@@ -144,6 +192,28 @@ try {
 
     $run = Invoke-BridgeCommand @{ action = "run_semantic_workflow"; workflow_path = $workflowPath } 30
     $observed = Invoke-BridgeCommand @{ action = "observe_semantic"; max_elements = 200 } 15
+    if ($Scenario -eq "vision-runtime-ambiguous") {
+        $left = @($observed.elements | Where-Object { $_.automation_id -eq "vision-status" -and $_.name -eq "도형 위치: 왼쪽" })
+        $right = @($observed.elements | Where-Object { $_.automation_id -eq "vision-status" -and $_.name -eq "도형 위치: 오른쪽" })
+        $passed = $run.Status -eq "EXECUTION_FAILED" -and $left.Count -eq 1 -and $right.Count -eq 0
+        $summary = [ordered]@{
+            executedAt = [DateTimeOffset]::Now
+            scenario = $Scenario
+            source = "actual unique-target recording replayed against a fresh window with two indistinguishable visual candidates"
+            sourceVideoSha256 = $compiled.sourceVideoSha256
+            stepCount = $compiled.stepCount
+            runStatus = $run.Status
+            visibleStatus = if ($left.Count -eq 1) { $left[0].name } else { $null }
+            wrongTargetExecutions = if ($right.Count -eq 0) { 0 } else { $right.Count }
+            journal = $run.Journal
+            passed = $passed
+        }
+        $summary | ConvertTo-Json -Depth 16 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")
+        $run | ConvertTo-Json -Depth 16 | Set-Content -Encoding utf8 (Join-Path $output "run.json")
+        $summary | ConvertTo-Json -Depth 16
+        if (-not $passed) { throw "복수 런타임 시각 후보에서 잘못된 대상을 실행했습니다." }
+        return
+    }
     $expectedEditorValue = if ($Scenario -eq "korean") { "회의록" } else { "meeting" }
     $expectedSavedStatus = if ($Scenario -eq "korean") { "한글 저장됨" } else { "저장됨" }
     $editor = @($observed.elements | Where-Object { $_.automation_id -eq "note-editor" -and $_.value -eq $expectedEditorValue })
@@ -162,6 +232,8 @@ try {
     $reordered = @($observed.elements | Where-Object { $_.role -eq "ListItem" -and $_.name -eq "업무 B" -and $_.value -eq "ordinal=3" })
     $reorderStatus = @($observed.elements | Where-Object { $_.automation_id -eq "priority-status" -and $_.name -eq "순서: A,C,D,B" })
     $canvasStatus = @($observed.elements | Where-Object { $_.automation_id -eq "canvas-status" -and $_.name -eq "도형 위치: 오른쪽" })
+    $visionStatus = @($observed.elements | Where-Object { $_.automation_id -eq "vision-status" -and $_.name -eq "도형 위치: 오른쪽" })
+    $visionClickStatus = @($observed.elements | Where-Object { $_.automation_id -eq "vision-click-status" -and $_.name -eq "실행됨" })
     $outcomeVisible = switch ($Scenario) {
         "scroll" { $scrolled.Count -eq 1 }
         "keyboard" { $toggled.Count -eq 1 -and $darkStatus.Count -eq 1 }
@@ -170,6 +242,8 @@ try {
         "focus" { $focused.Count -eq 1 -and $focusStatus.Count -eq 1 }
         "reorder" { $reordered.Count -eq 1 -and $reorderStatus.Count -eq 1 }
         "canvas" { $canvasStatus.Count -eq 1 }
+        "vision" { $visionStatus.Count -eq 1 }
+        "vision-click" { $visionClickStatus.Count -eq 1 }
         default { $editor.Count -eq 1 -and $saved.Count -eq 1 }
     }
     $passed = $run.Status -eq "SUCCESS" -and $outcomeVisible
@@ -186,8 +260,8 @@ try {
         videoEvidenceFrameCount = @($workflowDocument.videoEvidence).Count
         runStatus = $run.Status
         visibleEditorValue = if ($editor.Count -eq 1) { $editor[0].value } else { $null }
-        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } elseif ($reordered.Count -eq 1) { $reordered[0].value } elseif ($canvasStatus.Count -eq 1) { "relative-surface-drag" } else { $null }
-        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($Scenario -eq "focus" -and $focusStatus.Count -eq 1) { $focusStatus[0].name } elseif ($Scenario -eq "reorder" -and $reorderStatus.Count -eq 1) { $reorderStatus[0].name } elseif ($Scenario -eq "canvas" -and $canvasStatus.Count -eq 1) { $canvasStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
+        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } elseif ($reordered.Count -eq 1) { $reordered[0].value } elseif ($canvasStatus.Count -eq 1) { "relative-surface-drag" } elseif ($visionStatus.Count -eq 1) { "unique-visual-anchor-drag" } elseif ($visionClickStatus.Count -eq 1) { "unique-visual-anchor-click" } else { $null }
+        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($Scenario -eq "focus" -and $focusStatus.Count -eq 1) { $focusStatus[0].name } elseif ($Scenario -eq "reorder" -and $reorderStatus.Count -eq 1) { $reorderStatus[0].name } elseif ($Scenario -eq "canvas" -and $canvasStatus.Count -eq 1) { $canvasStatus[0].name } elseif ($Scenario -eq "vision" -and $visionStatus.Count -eq 1) { $visionStatus[0].name } elseif ($Scenario -eq "vision-click" -and $visionClickStatus.Count -eq 1) { $visionClickStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
         passed = $passed
     }
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")

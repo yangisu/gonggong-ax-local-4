@@ -107,11 +107,22 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         if (fallback is not null)
         {
             var automationId = fallback.Current.AutomationId ?? string.Empty;
+            var role = Role(fallback);
+            SemanticVisualAnchor? visualAnchor = null;
+            if (role == "Window")
+            {
+                var handle = new IntPtr(fallback.Current.NativeWindowHandle);
+                visualAnchor = WindowsVisualAnchor.CaptureUniqueAtScreenPoint(
+                    handle,
+                    checked((int)Math.Round(screenX)),
+                    checked((int)Math.Round(screenY)));
+            }
             target = new SemanticTargetSelector(
-                [Role(fallback)],
+                [role],
                 fallback.Current.Name,
                 string.IsNullOrWhiteSpace(automationId) ? null : automationId,
-                fallback.Current.IsOffscreen);
+                fallback.Current.IsOffscreen,
+                VisualAnchor: visualAnchor);
         }
         return (ToFrame(id, offsetSeconds, observation), target);
     }
@@ -255,6 +266,11 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             case "click":
                 InvokeOrClick(element);
                 break;
+            case "visual-click":
+                if (action.Target.VisualAnchor is not { } clickAnchor)
+                    throw new InvalidOperationException("시각 클릭 대상 근거가 없습니다.");
+                VisualClick(element, clickAnchor);
+                break;
             case "scroll":
                 if (!SemanticScrollCommand.TryParse(action.Value, out var command))
                     throw new InvalidOperationException("스크롤 동작 값이 올바르지 않습니다.");
@@ -294,6 +310,12 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                     throw new InvalidOperationException("작업 영역 드래그 값이 올바르지 않습니다.");
                 DragWithin(element, drag);
                 break;
+            case "visual-drag":
+                if (!SemanticRelativePoint.TryParse(action.Value, out var endPoint)
+                    || action.Target.VisualAnchor is not { } visualAnchor)
+                    throw new InvalidOperationException("시각 대상 드래그 값이 올바르지 않습니다.");
+                VisualDrag(element, visualAnchor, endPoint);
+                break;
             default:
                 throw new InvalidOperationException($"지원하지 않는 의미 동작입니다: {action.Kind}");
         }
@@ -317,7 +339,7 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 focusedRuntimeId = RuntimeIdentity(focused);
         }
         catch (ElementNotAvailableException) { }
-        var elements = Enumerate(root, 600).Select(element => ToElement(element, focusedRuntimeId)).ToArray();
+        var elements = EnumerateWithRoot(root, 600).Select(element => ToElement(element, focusedRuntimeId)).ToArray();
         var url = ReadActiveUrl(root);
         return new SemanticWorkflowObservation(process, title, url, elements, Revision(process, title, url, elements));
     }
@@ -356,7 +378,7 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         SemanticTargetSelector selector,
         bool includeOffscreen)
     {
-        var candidates = Enumerate(root, 800).Where(element =>
+        var candidates = EnumerateWithRoot(root, 800).Where(element =>
         {
             try
             {
@@ -396,6 +418,16 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             accepted++;
             yield return element;
         }
+    }
+
+    private static IEnumerable<AutomationElement> EnumerateWithRoot(AutomationElement root, int maximum)
+    {
+        if (maximum < 1) yield break;
+        var bounds = root.Current.BoundingRectangle;
+        if (!bounds.IsEmpty && bounds.Width > 1 && bounds.Height > 1)
+            yield return root;
+        foreach (var element in Enumerate(root, maximum - 1))
+            yield return element;
     }
 
     private static SemanticWorkflowElement ToElement(AutomationElement element, string? focusedRuntimeId = null)
@@ -598,6 +630,57 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         {
             mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
         }
+    }
+
+    private static void VisualDrag(
+        AutomationElement window,
+        SemanticVisualAnchor anchor,
+        SemanticRelativePoint endPoint)
+    {
+        if (window.Current.ControlType != ControlType.Window)
+            throw new InvalidOperationException("TARGET_MISMATCH: 시각 대상 드래그 컨테이너가 창이 아닙니다.");
+        var handle = new IntPtr(window.Current.NativeWindowHandle);
+        var match = WindowsVisualAnchor.FindUnique(handle, anchor);
+        if (match.CandidateCount != 1)
+            throw new InvalidOperationException(
+                $"TARGET_MISMATCH: 현재 화면의 시각 대상 후보가 {match.CandidateCount}개입니다.");
+        var bounds = window.Current.BoundingRectangle;
+        if (bounds.IsEmpty || bounds.Width <= 1 || bounds.Height <= 1)
+            throw new InvalidOperationException("TARGET_MISMATCH: 시각 대상 창 경계를 확인할 수 없습니다.");
+        var endX = checked((int)Math.Round(bounds.Left + bounds.Width * endPoint.X));
+        var endY = checked((int)Math.Round(bounds.Top + bounds.Height * endPoint.Y));
+        if (!SetCursorPos(match.ScreenX, match.ScreenY))
+            throw new InvalidOperationException("시각 대상 시작점으로 마우스 포인터를 이동하지 못했습니다.");
+        mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
+        try
+        {
+            for (var step = 1; step <= 12; step++)
+            {
+                var x = match.ScreenX + (endX - match.ScreenX) * step / 12;
+                var y = match.ScreenY + (endY - match.ScreenY) * step / 12;
+                if (!SetCursorPos(x, y))
+                    throw new InvalidOperationException("시각 대상 드래그 경로로 마우스 포인터를 이동하지 못했습니다.");
+                Thread.Sleep(25);
+            }
+        }
+        finally
+        {
+            mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+        }
+    }
+
+    private static void VisualClick(AutomationElement window, SemanticVisualAnchor anchor)
+    {
+        if (window.Current.ControlType != ControlType.Window)
+            throw new InvalidOperationException("TARGET_MISMATCH: 시각 클릭 컨테이너가 창이 아닙니다.");
+        var match = WindowsVisualAnchor.FindUnique(new IntPtr(window.Current.NativeWindowHandle), anchor);
+        if (match.CandidateCount != 1)
+            throw new InvalidOperationException(
+                $"TARGET_MISMATCH: 현재 화면의 시각 클릭 후보가 {match.CandidateCount}개입니다.");
+        if (!SetCursorPos(match.ScreenX, match.ScreenY))
+            throw new InvalidOperationException("시각 클릭 대상으로 마우스 포인터를 이동하지 못했습니다.");
+        mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
+        mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
     }
 
     private static bool TryGetListItemOrdinal(AutomationElement element, out int ordinal)

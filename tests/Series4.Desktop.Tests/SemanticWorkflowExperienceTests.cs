@@ -550,6 +550,102 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedVisionDrag_UsesAPixelAnchorAndRelativeWindowEndpoint()
+    {
+        WithVideo(video =>
+        {
+            var samples = Enumerable.Range(0, 169).Select(index => (byte)(index % 251)).ToArray();
+            var anchor = new SemanticVisualAnchor(1, 13, 80, Convert.ToBase64String(samples), 10, 30);
+            var target = new SemanticTargetSelector(
+                ["Window"], "그리기 앱", VisualAnchor: anchor);
+            var bounds = new SemanticBounds(100, 100, 700, 500);
+            var before = Frame("vision-before", .3,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "vision-status"));
+            var after = Frame("vision-after", .8,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "vision-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 220;
+            recorded.ScreenY = 300;
+            recorded.EndScreenX = 550;
+            recorded.EndScreenY = 300;
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "영상에서 본 파란 도형을 오른쪽으로 이동해 줘",
+                video,
+                1.2,
+                [recorded],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("visual-drag", step.Action.Kind);
+            Assert.Equal("0.75,0.5", step.Action.Value);
+            Assert.Equal(anchor, step.Action.Target!.VisualAnchor);
+            Assert.DoesNotContain("220", step.Action.Value);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "도형 위치: 오른쪽");
+        });
+    }
+
+    [Fact]
+    public void RecordedVisionClick_IsNotDowngradedToAWindowCenterClick()
+    {
+        WithVideo(video =>
+        {
+            var samples = Enumerable.Range(0, 169).Select(index => (byte)(index % 251)).ToArray();
+            var anchor = new SemanticVisualAnchor(1, 13, 80, Convert.ToBase64String(samples), 10, 30);
+            var target = new SemanticTargetSelector(["Window"], "그리기 앱", VisualAnchor: anchor);
+            var bounds = new SemanticBounds(100, 100, 700, 500);
+            var before = Frame("vision-click-before", .3,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "실행 대기", "vision-click-status"));
+            var after = Frame("vision-click-after", .8,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "실행됨", "vision-click-status"));
+            var recorded = RecordedClick(1, .5, before, target);
+            recorded.ScreenX = 220;
+            recorded.ScreenY = 300;
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "영상에서 본 파란 버튼을 눌러 줘", video, 1.2, [recorded], after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("visual-click", step.Action.Kind);
+            Assert.Equal(anchor, step.Action.Target!.VisualAnchor);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "실행됨");
+        });
+    }
+
+    [Fact]
+    public void VisualAnchorMatcher_RequiresOnePixelCandidateCluster()
+    {
+        const int width = 420;
+        const int height = 240;
+        var pixels = Enumerable.Repeat((byte)220, width * height * 4).ToArray();
+        PaintRectangle(pixels, width, 65, 95, 50, 50, blue: 180, green: 110, red: 40);
+        var anchor = WindowsVisualAnchor.CreateAnchorFromPixels(pixels, width, height, 90, 120);
+
+        var unique = WindowsVisualAnchor.FindUnique(pixels, width, height, 10, 20, anchor);
+
+        Assert.Equal(1, unique.CandidateCount);
+        Assert.InRange(unique.ScreenX, 10 + 90 - anchor.ClusterRadius, 10 + 90 + anchor.ClusterRadius);
+        Assert.InRange(unique.ScreenY, 20 + 120 - anchor.ClusterRadius, 20 + 120 + anchor.ClusterRadius);
+
+        PaintRectangle(pixels, width, 285, 95, 50, 50, blue: 180, green: 110, red: 40);
+        var ambiguous = WindowsVisualAnchor.FindUnique(pixels, width, height, 0, 0, anchor);
+
+        Assert.True(ambiguous.CandidateCount >= 2);
+    }
+
+    [Fact]
     public void RecordedArrowNavigation_BecomesASelectionByFinalOptionName()
     {
         WithVideo(video =>
@@ -686,9 +782,12 @@ public sealed class SemanticWorkflowExperienceTests
         var video = Path.Combine(directory, "recording.mp4");
         var sidecar = Path.Combine(directory, "recording.series4.json");
         File.WriteAllBytes(video, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+        var anchor = new SemanticVisualAnchor(
+            1, 13, 80, Convert.ToBase64String(Enumerable.Range(0, 169).Select(index => (byte)index).ToArray()), 10, 30);
         var frame = Frame("before", .4,
             Element("Button", "다음", "next", bounds: new SemanticBounds(10, 20, 110, 60)));
-        var recorded = RecordedClick(1, .5, frame, Selector("Button", "다음", "next"));
+        var recorded = RecordedClick(1, .5, frame,
+            new SemanticTargetSelector(["Button"], "다음", "next", VisualAnchor: anchor));
         try
         {
             await MacroProjectStore.SaveToPathAsync(sidecar, video, [recorded]);
@@ -698,6 +797,7 @@ public sealed class SemanticWorkflowExperienceTests
             Assert.Equal("before", restored.SemanticBefore?.Id);
             Assert.Equal("next", restored.SemanticTarget?.AutomationId);
             Assert.Equal("다음", restored.SemanticTarget?.Name);
+            Assert.Equal(anchor, restored.SemanticTarget?.VisualAnchor);
             Assert.Equal(new SemanticBounds(10, 20, 110, 60), restored.SemanticBefore?.Elements[0].Bounds);
         }
         finally
@@ -821,6 +921,30 @@ public sealed class SemanticWorkflowExperienceTests
             SemanticTarget = target,
             SemanticCaptureId = Guid.NewGuid(),
         };
+
+    private static void PaintRectangle(
+        byte[] pixels,
+        int width,
+        int left,
+        int top,
+        int rectangleWidth,
+        int rectangleHeight,
+        byte blue,
+        byte green,
+        byte red)
+    {
+        for (var y = top; y < top + rectangleHeight; y++)
+        {
+            for (var x = left; x < left + rectangleWidth; x++)
+            {
+                var offset = (y * width + x) * 4;
+                pixels[offset] = blue;
+                pixels[offset + 1] = green;
+                pixels[offset + 2] = red;
+                pixels[offset + 3] = 255;
+            }
+        }
+    }
 
     private static void WithVideo(Action<string> action)
     {

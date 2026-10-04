@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 10,
-  "passed": 10,
+  "total": 11,
+  "passed": 11,
   "failed": 0,
   "scenarios": [
     {
@@ -76,6 +76,16 @@
         "action": "drag-within",
         "demonstrationBounds": "400x200",
         "replayWindow": "820x500",
+        "status": "도형 위치: 오른쪽"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "영상에서 본 파란 도형을 오른쪽으로 이동해 줘",
+      "workflowSource": "synchronized grayscale visual anchor on an otherwise inaccessible shape, plus semantic before/after user outcome evidence",
+      "visibleUserOutcome": {
+        "action": "visual-drag",
+        "targetAccessibility": "window only; shape absent from UI Automation",
         "status": "도형 위치: 오른쪽"
       },
       "result": "PASS"

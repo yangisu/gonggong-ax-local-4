@@ -127,9 +127,11 @@ public static class RecordedSemanticWorkflowExtractor
             if (current.Event.ActionKind == MacroActionKind.MouseLeftClick)
             {
                 RequireClickEvidence(current.Event);
-                var kind = current.Event.SemanticTarget!.Roles.Any(role => role is "CheckBox" or "RadioButton")
-                    ? "toggle"
-                    : "click";
+                var kind = current.Event.SemanticTarget!.VisualAnchor is not null
+                    ? "visual-click"
+                    : current.Event.SemanticTarget.Roles.Any(role => role is "CheckBox" or "RadioButton")
+                        ? "toggle"
+                        : "click";
                 units.Add(new ExtractedUnit(
                     [current], kind, current.Event.SemanticTarget!, null,
                     current.Event.SemanticBefore!, null));
@@ -302,6 +304,25 @@ public static class RecordedSemanticWorkflowExtractor
                         "drag-within",
                         current.Event.SemanticTarget,
                         drag.ToString(),
+                        current.Event.SemanticBefore!,
+                        after));
+                }
+                else if (current.Event.SemanticTarget.Roles.Any(role => role == "Window")
+                    && current.Event.SemanticTarget.VisualAnchor is not null)
+                {
+                    RequireVisualDragEvidence(current.Event);
+                    var bounds = TargetElement(current.Event.SemanticBefore!, current.Event.SemanticTarget).Bounds!;
+                    if (!SemanticRelativePoint.TryCreate(
+                        bounds,
+                        current.Event.EndScreenX!.Value,
+                        current.Event.EndScreenY!.Value,
+                        out var endPoint))
+                        throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 시각 드래그 끝점을 현재 창에 정규화할 수 없습니다.");
+                    units.Add(new ExtractedUnit(
+                        [current],
+                        "visual-drag",
+                        current.Event.SemanticTarget,
+                        endPoint.ToString(),
                         current.Event.SemanticBefore!,
                         after));
                 }
@@ -553,6 +574,25 @@ public static class RecordedSemanticWorkflowExtractor
         var target = TargetElement(item.SemanticBefore, item.SemanticTarget);
         if (target.Bounds is not { IsUsable: true })
             throw new InvalidOperationException($"이벤트 {item.Sequence}의 작업 영역 경계 증거가 없습니다.");
+    }
+
+    private static void RequireVisualDragEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 시각 대상 드래그 전후 의미 증거가 없습니다.");
+        if (item.DragButton != MouseButton.Button1)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 시각 대상 조작은 왼쪽 버튼 드래그만 지원합니다.");
+        if (item.ModifierKeyCodes.Length > 0)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 드래그는 자동 변환하지 않습니다.");
+        if (item.ScreenX is null || item.ScreenY is null || item.EndScreenX is null || item.EndScreenY is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 시각 대상 드래그 시작점 또는 끝점이 없습니다.");
+        if (!item.SemanticTarget.Roles.Any(role => role == "Window")
+            || item.SemanticTarget.VisualAnchor is not { } anchor
+            || !anchor.TryDecode(out _))
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 영상 동기 시각 대상 근거가 없습니다.");
+        var target = TargetElement(item.SemanticBefore, item.SemanticTarget);
+        if (target.Bounds is not { IsUsable: true })
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 시각 대상 창 경계 증거가 없습니다.");
     }
 
     private static bool SameTextTarget(RecordedEvent first, RecordedEvent second) =>

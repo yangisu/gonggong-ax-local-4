@@ -12,7 +12,32 @@ public sealed record SemanticTargetSelector(
     string? AutomationId = null,
     bool AllowOffscreen = false,
     string? ExpectedValue = null,
-    bool RequireKeyboardFocus = false);
+    bool RequireKeyboardFocus = false,
+    SemanticVisualAnchor? VisualAnchor = null);
+
+public sealed record SemanticVisualAnchor(
+    int Version,
+    int SampleSize,
+    int SpanPixels,
+    string GrayBase64,
+    int MaximumAverageDifference = 12,
+    int ClusterRadius = 18)
+{
+    public bool TryDecode(out byte[] samples)
+    {
+        samples = [];
+        if (Version != 1
+            || SampleSize is < 7 or > 25
+            || SpanPixels is < 24 or > 160
+            || SpanPixels % 2 != 0
+            || MaximumAverageDifference is < 1 or > 64
+            || ClusterRadius is < 4 or > 80)
+            return false;
+        try { samples = Convert.FromBase64String(GrayBase64); }
+        catch (FormatException) { return false; }
+        return samples.Length == SampleSize * SampleSize;
+    }
+}
 
 public sealed record SemanticBounds(double Left, double Top, double Right, double Bottom)
 {
@@ -206,6 +231,38 @@ public sealed record SemanticRelativeDrag(double StartX, double StartY, double E
     }
 }
 
+public sealed record SemanticRelativePoint(double X, double Y)
+{
+    public static bool TryParse(string? value, out SemanticRelativePoint point)
+    {
+        point = new SemanticRelativePoint(0, 0);
+        var parts = value?.Split(',', StringSplitOptions.TrimEntries) ?? [];
+        if (parts.Length != 2
+            || !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
+            || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var y)
+            || !double.IsFinite(x)
+            || !double.IsFinite(y)
+            || x is < 0.01 or > 0.99
+            || y is < 0.01 or > 0.99)
+            return false;
+        point = new SemanticRelativePoint(x, y);
+        return true;
+    }
+
+    public override string ToString() => string.Join(',',
+        X.ToString("0.######", CultureInfo.InvariantCulture),
+        Y.ToString("0.######", CultureInfo.InvariantCulture));
+
+    public static bool TryCreate(SemanticBounds bounds, double screenX, double screenY, out SemanticRelativePoint point)
+    {
+        point = new SemanticRelativePoint(0, 0);
+        if (!bounds.IsUsable) return false;
+        return TryParse(new SemanticRelativePoint(
+            (screenX - bounds.Left) / bounds.Width,
+            (screenY - bounds.Top) / bounds.Height).ToString(), out point);
+    }
+}
+
 public sealed record SemanticWorkflowStepDefinition(
     string Id,
     string FromStateId,
@@ -280,7 +337,7 @@ public static class SemanticWorkflowCompiler
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus", "reorder-item", "drag-within",
+        "click", "visual-click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus", "reorder-item", "drag-within", "visual-drag",
     };
 
     private static readonly string[] IrreversibleTerms =
@@ -334,6 +391,14 @@ public static class SemanticWorkflowCompiler
                 throw new InvalidOperationException($"단계 {action.Id}의 목록 순서 값이 올바르지 않습니다.");
             if (action.Kind == "drag-within" && !SemanticRelativeDrag.TryParse(action.Value, out _))
                 throw new InvalidOperationException($"단계 {action.Id}의 작업 영역 드래그 값이 올바르지 않습니다.");
+            if (action.Kind == "visual-drag"
+                && (!SemanticRelativePoint.TryParse(action.Value, out _)
+                    || action.Target?.VisualAnchor is not { } anchor
+                    || !anchor.TryDecode(out _)))
+                throw new InvalidOperationException($"단계 {action.Id}의 시각 대상 드래그 근거가 올바르지 않습니다.");
+            if (action.Kind == "visual-click"
+                && (action.Target?.VisualAnchor is not { } clickAnchor || !clickAnchor.TryDecode(out _)))
+                throw new InvalidOperationException($"단계 {action.Id}의 시각 클릭 근거가 올바르지 않습니다.");
             if (!frameById.TryGetValue(action.BeforeFrameId, out var beforeItems)
                 || !frameById.TryGetValue(action.AfterFrameId, out var afterItems))
                 throw new InvalidOperationException($"단계 {action.Id}가 존재하지 않는 화면 증거를 참조합니다.");

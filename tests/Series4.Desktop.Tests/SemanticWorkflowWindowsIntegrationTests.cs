@@ -21,6 +21,7 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
 {
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr window);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
 
     [WindowsIntegrationFact]
     public void RecordedNoteTask_ProducesVisibleTextAndSavedStateInARealWindow()
@@ -268,6 +269,52 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
             Assert.Equal("0.15,0.5,0.75,0.5", Assert.Single(workflow.Steps).Action.Value);
             Assert.Contains(visible.Elements,
                 element => element.AutomationId == "canvas-status" && element.Name == "도형 위치: 오른쪽");
+        });
+    }
+
+    [WindowsIntegrationFact]
+    public void VisualDrag_ReidentifiesAnInaccessibleShapeInARealWindow()
+    {
+        RunWithFixture("vision", video =>
+        {
+            var surface = new WindowsSemanticWorkflowSurface();
+            var observed = surface.Observe();
+            var window = Assert.Single(observed.Elements, element =>
+                element.Role == "Window" && element.Name == "Semantic Workflow UX Fixture");
+            var bounds = Assert.IsType<SemanticBounds>(window.Bounds);
+            var startX = bounds.Left + bounds.Width * .19;
+            var startY = bounds.Top + bounds.Height * .524;
+            var anchor = WindowsVisualAnchor.CaptureUniqueAtScreenPoint(
+                GetForegroundWindow(),
+                checked((int)Math.Round(startX)),
+                checked((int)Math.Round(startY)));
+            var target = new SemanticTargetSelector(
+                ["Window"], "Semantic Workflow UX Fixture", VisualAnchor: anchor);
+            var before = Frame("vision-before", .3,
+                Element("Window", "Semantic Workflow UX Fixture", "", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "vision-status"));
+            var after = Frame("vision-after", .8,
+                Element("Window", "Semantic Workflow UX Fixture", "", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "vision-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = startX;
+            recorded.ScreenY = startY;
+            recorded.EndScreenX = bounds.Left + bounds.Width * .71;
+            recorded.EndScreenY = startY;
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "영상에서 본 파란 도형을 오른쪽으로 이동해 줘",
+                video,
+                1.2,
+                [recorded],
+                after);
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Equal("visual-drag", Assert.Single(workflow.Steps).Action.Kind);
+            Assert.Contains(visible.Elements,
+                element => element.AutomationId == "vision-status" && element.Name == "도형 위치: 오른쪽");
         });
     }
 

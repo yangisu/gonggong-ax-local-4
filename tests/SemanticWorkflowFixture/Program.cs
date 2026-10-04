@@ -36,7 +36,7 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo" or "canvas-demo";
+        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo" or "canvas-demo" or "vision-demo" or "vision-ambiguous-demo" or "vision-click-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
@@ -48,13 +48,17 @@ public static class Program
             "korean" or "korean-demo" => KoreanEditorContent(),
             "reorder" or "reorder-demo" => ReorderContent(),
             "canvas" or "canvas-demo" => CanvasContent(),
+            "vision" or "vision-demo" => CanvasContent(accessible: false, statusId: "vision-status"),
+            "vision-duplicate" => CanvasContent(accessible: false, statusId: "vision-status", duplicateShape: true),
+            "vision-ambiguous-demo" => CanvasContent(accessible: false, statusId: "vision-ambiguous-status", duplicateShape: true),
+            "vision-click" or "vision-click-demo" => VisionClickContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
         var window = new Window
         {
             Title = "Semantic Workflow UX Fixture",
-            Width = mode == "canvas" ? 820 : 640,
+            Width = mode is "canvas" or "vision" or "vision-duplicate" or "vision-click" ? 820 : 640,
             Height = mode == "canvas" ? 500 : 420,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             Background = Brushes.White,
@@ -182,7 +186,7 @@ public static class Program
                     });
                     return;
                 }
-                if (mode == "canvas-demo")
+                if (mode is "canvas-demo" or "vision-demo" or "vision-ambiguous-demo")
                 {
                     var canvas = FindDescendant<Canvas>(window)
                         ?? throw new InvalidOperationException("작업 영역을 찾지 못했습니다.");
@@ -203,6 +207,21 @@ public static class Program
                             SetCursorPos((int)Math.Round(x), (int)Math.Round(y));
                             Thread.Sleep(40);
                         }
+                        mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero);
+                    });
+                    return;
+                }
+                if (mode == "vision-click-demo")
+                {
+                    var shape = FindDescendant<Rectangle>(window)
+                        ?? throw new InvalidOperationException("시각 클릭 대상을 찾지 못했습니다.");
+                    var point = shape.PointToScreen(new Point(shape.ActualWidth / 2, shape.ActualHeight / 2));
+                    SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y));
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero);
+                        Thread.Sleep(100);
                         mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero);
                     });
                     return;
@@ -502,17 +521,24 @@ public static class Program
         return panel;
     }
 
-    private static UIElement CanvasContent()
+    private static UIElement CanvasContent(
+        bool accessible = true,
+        string statusId = "canvas-status",
+        bool duplicateShape = false)
     {
         var panel = Panel("도형 배치");
         var status = Named(new TextBlock { Text = "도형 위치: 왼쪽", FontSize = 18 },
-            "canvas-status", "도형 위치: 왼쪽");
-        var canvas = Named(new AccessibleCanvas
+            statusId, "도형 위치: 왼쪽");
+        Canvas canvas = accessible ? new AccessibleCanvas() : new Canvas();
+        canvas.Height = 180;
+        canvas.HorizontalAlignment = HorizontalAlignment.Stretch;
+        canvas.Background = Brushes.Gainsboro;
+        if (accessible)
         {
-            Height = 180,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = Brushes.Gainsboro,
-        }, "shape-canvas", "도형 작업 영역");
+            AutomationProperties.SetAutomationId(canvas, "shape-canvas");
+            AutomationProperties.SetName(canvas, "도형 작업 영역");
+        }
+        canvas.Margin = new Thickness(0, 0, 0, 20);
         var shape = new Rectangle
         {
             Width = 50,
@@ -521,10 +547,24 @@ public static class Program
         };
         Canvas.SetTop(shape, 65);
         canvas.Children.Add(shape);
+        Rectangle? duplicate = null;
+        if (duplicateShape)
+        {
+            duplicate = new Rectangle
+            {
+                Width = 50,
+                Height = 50,
+                Fill = Brushes.SteelBlue,
+            };
+            Canvas.SetTop(duplicate, 65);
+            canvas.Children.Add(duplicate);
+        }
         canvas.SizeChanged += (_, _) =>
         {
             if (!shape.IsMouseCaptured && status.Text == "도형 위치: 왼쪽")
                 Canvas.SetLeft(shape, Math.Max(8, canvas.ActualWidth * .15 - shape.Width / 2));
+            if (duplicate is not null)
+                Canvas.SetLeft(duplicate, Math.Max(8, canvas.ActualWidth * .65 - duplicate.Width / 2));
         };
         shape.MouseLeftButtonDown += (_, args) =>
         {
@@ -537,6 +577,39 @@ public static class Program
             Canvas.SetLeft(shape, Math.Clamp(point.X - shape.Width / 2, 0, Math.Max(0, canvas.ActualWidth - shape.Width)));
             shape.ReleaseMouseCapture();
             status.Text = point.X >= canvas.ActualWidth / 2 ? "도형 위치: 오른쪽" : "도형 위치: 왼쪽";
+            AutomationProperties.SetName(status, status.Text);
+            args.Handled = true;
+        };
+        panel.Children.Add(canvas);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement VisionClickContent()
+    {
+        var panel = Panel("시각 버튼");
+        var status = Named(new TextBlock { Text = "실행 대기", FontSize = 18 },
+            "vision-click-status", "실행 대기");
+        var canvas = new Canvas
+        {
+            Height = 160,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = Brushes.Gainsboro,
+            Margin = new Thickness(0, 0, 0, 20),
+        };
+        var shape = new Rectangle
+        {
+            Width = 70,
+            Height = 54,
+            Fill = Brushes.SteelBlue,
+        };
+        Canvas.SetTop(shape, 53);
+        canvas.Children.Add(shape);
+        canvas.SizeChanged += (_, _) =>
+            Canvas.SetLeft(shape, Math.Max(8, canvas.ActualWidth * .22 - shape.Width / 2));
+        shape.MouseLeftButtonUp += (_, args) =>
+        {
+            status.Text = "실행됨";
             AutomationProperties.SetName(status, status.Text);
             args.Handled = true;
         };
