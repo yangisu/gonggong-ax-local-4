@@ -27,7 +27,8 @@ public sealed record SemanticDemonstrationFrame(
     string ProcessName,
     string WindowTitle,
     string Url,
-    IReadOnlyList<SemanticElementEvidence> Elements);
+    IReadOnlyList<SemanticElementEvidence> Elements,
+    string? VideoFrameSha256 = null);
 
 public sealed record SemanticDemonstrationAction(
     string Id,
@@ -102,11 +103,24 @@ public sealed record SemanticWorkflowStepDefinition(
     SemanticWorkflowActionDefinition Action,
     SemanticWorkflowEvidence Evidence);
 
+public sealed record SemanticVideoEvidenceReference(
+    string ScreenEvidenceId,
+    double OffsetSeconds,
+    string VideoFrameSha256);
+
+public sealed record SemanticVideoEvidenceValidationResult(
+    int ReferencedFrameCount,
+    int HashedFrameCount,
+    double Coverage);
+
 public sealed record SemanticWorkflowDefinition(
     int Version,
     string NaturalLanguageIntent,
     string SourceVideoSha256,
+    string SourceVideoPath,
     DemonstrationValidationResult EvidenceCoverage,
+    SemanticVideoEvidenceValidationResult VideoEvidenceCoverage,
+    IReadOnlyList<SemanticVideoEvidenceReference> VideoEvidence,
     IReadOnlyList<SemanticWorkflowStepDefinition> Steps)
 {
     public string ToJson() => JsonSerializer.Serialize(this, SemanticWorkflowJson.Options);
@@ -130,6 +144,23 @@ public static class SemanticWorkflowJson
         };
         options.Converters.Add(new JsonStringEnumConverter());
         return options;
+    }
+}
+
+public static class SemanticWorkflowIntegrityVerifier
+{
+    public static void VerifySourceVideo(SemanticWorkflowDefinition workflow, string? sourceVideoOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(workflow);
+        var path = string.IsNullOrWhiteSpace(sourceVideoOverride)
+            ? workflow.SourceVideoPath
+            : Path.GetFullPath(sourceVideoOverride);
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+            throw new InvalidOperationException("Workflow의 원본 시연 영상을 찾을 수 없습니다.");
+        using var stream = File.OpenRead(path);
+        var actual = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        if (!string.Equals(actual, workflow.SourceVideoSha256, StringComparison.Ordinal))
+            throw new InvalidOperationException("원본 시연 영상 SHA-256이 Workflow 생성 시점과 달라 실행할 수 없습니다.");
     }
 }
 
@@ -221,6 +252,18 @@ public static class SemanticWorkflowCompiler
             demonstration.InputEvents,
             screens,
             links);
+        var referencedScreenIds = links.SelectMany(link => link.ScreenEvidenceIds)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var referencedFrames = referencedScreenIds.Select(id => frameById[id][0]).ToArray();
+        var hashedFrames = referencedFrames.Where(frame => IsSha256(frame.VideoFrameSha256)).ToArray();
+        var videoCoverage = (double)hashedFrames.Length / referencedFrames.Length;
+        if (videoCoverage < 0.8)
+            throw new InvalidOperationException($"단계별 MP4 프레임 증거 반영률이 80% 미만입니다: {videoCoverage:P0}");
+        var videoEvidence = hashedFrames.Select(frame => new SemanticVideoEvidenceReference(
+            frame.Id,
+            frame.OffsetSeconds,
+            frame.VideoFrameSha256!)).ToArray();
 
         var steps = new List<SemanticWorkflowStepDefinition>();
         for (var index = 0; index < demonstration.Actions.Count; index++)
@@ -253,7 +296,15 @@ public static class SemanticWorkflowCompiler
         string hash;
         using (var stream = File.OpenRead(demonstration.VideoPath))
             hash = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-        return new SemanticWorkflowDefinition(1, intent, hash, coverage, steps);
+        return new SemanticWorkflowDefinition(
+            2,
+            intent,
+            hash,
+            Path.GetFullPath(demonstration.VideoPath),
+            coverage,
+            new SemanticVideoEvidenceValidationResult(referencedFrames.Length, hashedFrames.Length, videoCoverage),
+            videoEvidence,
+            steps);
     }
 
     private static void ValidateMp4(string path)
@@ -267,6 +318,9 @@ public static class SemanticWorkflowCompiler
             || header[7] != (byte)'p')
             throw new InvalidOperationException("원본 시연 파일이 MP4 컨테이너가 아닙니다.");
     }
+
+    private static bool IsSha256(string? value) =>
+        value is { Length: 64 } && value.All(character => char.IsAsciiHexDigit(character));
 
     private static SemanticStatePredicate BuildPredicate(
         SemanticDemonstrationFrame frame,

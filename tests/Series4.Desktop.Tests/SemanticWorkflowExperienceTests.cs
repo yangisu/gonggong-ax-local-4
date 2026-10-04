@@ -1,6 +1,8 @@
 using Series4.Desktop;
 using SharpHook.Data;
 using Xunit;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Series4.Desktop.Tests;
 
@@ -41,6 +43,8 @@ public sealed class SemanticWorkflowExperienceTests
             Assert.Equal(["create-note", "enter-note"], surface.ExecutedSteps);
             Assert.Equal(0, surface.WrongTargetExecutions);
             Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
+            Assert.Equal(1, workflow.VideoEvidenceCoverage.Coverage);
+            Assert.All(workflow.VideoEvidence, evidence => Assert.Equal(64, evidence.VideoFrameSha256.Length));
             Assert.All(result.Journal.Where(item => item.Phase == "verification"),
                 item => Assert.StartsWith("success", item.Verification));
         });
@@ -143,6 +147,38 @@ public sealed class SemanticWorkflowExperienceTests
             Assert.Contains("MP4", error.Message);
         }
         finally { File.Delete(video); }
+    }
+
+    [Fact]
+    public void CompilerRejectsWorkflowWhenMostReferencedVideoFramesHaveNoPixelHash()
+    {
+        WithVideo(video =>
+        {
+            var demonstration = DarkModeDemonstration(video);
+            demonstration = demonstration with
+            {
+                Frames = demonstration.Frames.Select((frame, index) =>
+                    index == 0 ? frame : frame with { VideoFrameSha256 = null }).ToArray(),
+            };
+            var error = Assert.Throws<InvalidOperationException>(() => SemanticWorkflowCompiler.Compile(demonstration));
+            Assert.Contains("MP4 프레임 증거", error.Message);
+        });
+    }
+
+    [Fact]
+    public void SourceVideoIntegrity_IsCheckedAgainImmediatelyBeforeExecution()
+    {
+        WithVideo(video =>
+        {
+            var workflow = SemanticWorkflowCompiler.Compile(DarkModeDemonstration(video));
+            SemanticWorkflowIntegrityVerifier.VerifySourceVideo(workflow);
+
+            File.WriteAllBytes(video, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50, 1]);
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                SemanticWorkflowIntegrityVerifier.VerifySourceVideo(workflow));
+            Assert.Contains("SHA-256", error.Message);
+        });
     }
 
     [Fact]
@@ -275,7 +311,10 @@ public sealed class SemanticWorkflowExperienceTests
         [new("enable-dark-mode", 0, .6, "toggle", Selector("Button", "어두운 모드", "dark-mode"), null, "light", "dark")]);
 
     private static SemanticDemonstrationFrame Frame(string id, double offset, params SemanticElementEvidence[] elements) =>
-        new(id, offset, "SampleApp", "업무 앱", string.Empty, elements);
+        new(id, offset, "SampleApp", "업무 앱", string.Empty, elements, FrameHash(id));
+
+    private static string FrameHash(string id) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).ToLowerInvariant();
 
     private static SemanticElementEvidence Element(string role, string name, string automationId, string value = "") =>
         new(role, name, automationId, value);

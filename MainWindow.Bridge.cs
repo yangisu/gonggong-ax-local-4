@@ -140,6 +140,7 @@ public partial class MainWindow
                 workflow.NaturalLanguageIntent,
                 stepCount = workflow.Steps.Count,
                 evidenceCoverage = workflow.EvidenceCoverage.Coverage,
+                videoEvidenceCoverage = workflow.VideoEvidenceCoverage.Coverage,
             };
         }
         if (action == "compile_current_semantic_workflow")
@@ -154,8 +155,18 @@ public partial class MainWindow
             var duration = RecordedVideo.NaturalDuration.TimeSpan.TotalSeconds;
             var final = WindowsSemanticWorkflowSurface.CaptureDemonstrationFrame(
                 $"final-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}", duration).Frame;
+            var semanticFrames = RecordedEvents
+                .SelectMany(item => new[] { item.SemanticBefore, item.SemanticAfter })
+                .Where(frame => frame is not null)
+                .Cast<SemanticDemonstrationFrame>()
+                .Append(final)
+                .GroupBy(frame => frame.Id, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToArray();
+            var videoFrameHashes = await VideoFrameEvidenceExtractor.ExtractAsync(
+                currentVideoPath, semanticFrames);
             var workflow = RecordedSemanticWorkflowExtractor.Compile(
-                intent, currentVideoPath, duration, RecordedEvents.ToArray(), final);
+                intent, currentVideoPath, duration, RecordedEvents.ToArray(), final, videoFrameHashes);
             var workflowPath = command.TryGetProperty("workflow_path", out var currentWorkflowValue)
                 ? Path.GetFullPath(currentWorkflowValue.GetString() ?? throw new ArgumentException("workflow_path가 비어 있습니다."))
                 : currentVideoPath + ".workflow.json";
@@ -170,6 +181,7 @@ public partial class MainWindow
                 workflow.NaturalLanguageIntent,
                 stepCount = workflow.Steps.Count,
                 evidenceCoverage = workflow.EvidenceCoverage.Coverage,
+                videoEvidenceCoverage = workflow.VideoEvidenceCoverage.Coverage,
                 source = "current-recording",
             };
         }
@@ -179,6 +191,10 @@ public partial class MainWindow
             var workflowPath = Path.GetFullPath(command.GetProperty("workflow_path").GetString()
                 ?? throw new ArgumentException("workflow_path가 필요합니다."));
             var workflow = SemanticWorkflowDefinition.FromJson(await File.ReadAllTextAsync(workflowPath));
+            var sourceVideoOverride = command.TryGetProperty("source_video_path", out var sourceVideoValue)
+                ? sourceVideoValue.GetString()
+                : null;
+            SemanticWorkflowIntegrityVerifier.VerifySourceVideo(workflow, sourceVideoOverride);
             return new SemanticWorkflowRunner().Run(workflow: workflow, surface: new WindowsSemanticWorkflowSurface());
         }
         if (action == "run_google_sheets_golden_path")

@@ -33,6 +33,9 @@ $engine.StartInfo.UseShellExecute = $false
 $engine.StartInfo.RedirectStandardInput = $true
 $engine.StartInfo.RedirectStandardOutput = $true
 $engine.StartInfo.RedirectStandardError = $true
+$engine.StartInfo.StandardInputEncoding = [System.Text.UTF8Encoding]::new($false)
+$engine.StartInfo.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$engine.StartInfo.StandardErrorEncoding = [System.Text.UTF8Encoding]::new($false)
 $engine.StartInfo.CreateNoWindow = $true
 [void]$engine.Start()
 
@@ -72,8 +75,15 @@ try {
         intent = "새 메모를 만들고 meeting을 입력해 줘"
         workflow_path = $workflowPath
     } 30
-    if ($compiled.stepCount -ne 1 -or $compiled.evidenceCoverage -ne 1) {
-        throw "녹화 Workflow가 기대한 1단계·100% 증거로 컴파일되지 않았습니다."
+    if ($compiled.stepCount -ne 1 -or $compiled.evidenceCoverage -ne 1 -or $compiled.videoEvidenceCoverage -ne 1) {
+        throw "녹화 Workflow가 기대한 1단계·100% 입력/MP4 프레임 증거로 컴파일되지 않았습니다."
+    }
+    $workflowDocument = Get-Content -LiteralPath $workflowPath -Raw | ConvertFrom-Json
+    $invalidVideoEvidence = @($workflowDocument.videoEvidence | Where-Object {
+        $_.videoFrameSha256 -notmatch '^[0-9a-f]{64}$'
+    })
+    if (@($workflowDocument.videoEvidence).Count -lt 2 -or $invalidVideoEvidence.Count -ne 0) {
+        throw "단계별 MP4 픽셀 해시가 Workflow에 보존되지 않았습니다."
     }
 
     if ($demonstration -and -not $demonstration.HasExited) {
@@ -97,6 +107,8 @@ try {
         sourceVideoSha256 = $compiled.sourceVideoSha256
         stepCount = $compiled.stepCount
         evidenceCoverage = $compiled.evidenceCoverage
+        videoEvidenceCoverage = $compiled.videoEvidenceCoverage
+        videoEvidenceFrameCount = @($workflowDocument.videoEvidence).Count
         runStatus = $run.Status
         visibleEditorValue = if ($editor.Count -eq 1) { $editor[0].value } else { $null }
         visibleStatus = if ($saved.Count -eq 1) { $saved[0].name } else { $null }

@@ -3,6 +3,8 @@ using System.Runtime.InteropServices;
 using Series4.Desktop;
 using SharpHook.Data;
 using Xunit;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace Series4.Desktop.Tests;
 
@@ -124,7 +126,10 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     }
 
     private static SemanticDemonstrationFrame Frame(string id, double offset, params SemanticElementEvidence[] elements) =>
-        new(id, offset, "SemanticWorkflowFixture", "Semantic Workflow UX Fixture", string.Empty, elements);
+        new(id, offset, "SemanticWorkflowFixture", "Semantic Workflow UX Fixture", string.Empty, elements, FrameHash(id));
+
+    private static string FrameHash(string id) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).ToLowerInvariant();
 
     private static SemanticElementEvidence Element(string role, string name, string automationId, string value = "") =>
         new(role, name, automationId, value);

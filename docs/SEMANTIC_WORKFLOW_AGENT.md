@@ -4,7 +4,7 @@
 
 `SemanticWorkflowCompiler`와 `SemanticWorkflowRunner`는 Google Sheets 같은 특정 앱이나 고정 단계 이름을 알지 못한다. 한 번의 시연에서 얻은 자연어 의도, 원본 영상, 동기화 입력 이벤트, 입력 전후의 의미 화면을 받아 상태 기반 Workflow를 만들고 현재 Windows 화면을 매 단계 다시 관찰해 실행한다.
 
-의미 화면과 입력 대상까지 포함된 `SemanticDemonstration` JSON부터 실제 Windows 실행까지 연결되어 있다. 새 녹화의 왼쪽 클릭은 누르는 순간의 전경 창·UI Automation 요소·클릭 대상을 저장한다. 편집 필드의 연속 키 입력은 키 배열을 추측하지 않고 각 키의 입력 전·해제 후 필드 값으로 하나의 `type` 단계로 묶는다. 현재 녹화에서 직접 Workflow를 만드는 경로가 있으며 자동 추출 범위는 의미 대상이 확인된 왼쪽 클릭, 체크박스/라디오 토글, 일반 편집 필드의 텍스트 입력이다. 드래그·휠·키보드 탐색과 MP4 픽셀 기반 의미 추출은 아직 연결되지 않았으므로 “임의 녹화 영상을 바로 자동화한다”고 표현해서는 안 된다.
+의미 화면과 입력 대상까지 포함된 `SemanticDemonstration` JSON부터 실제 Windows 실행까지 연결되어 있다. 새 녹화의 왼쪽 클릭은 누르는 순간의 전경 창·UI Automation 요소·클릭 대상을 저장한다. 편집 필드의 연속 키 입력은 키 배열을 추측하지 않고 각 키의 입력 전·해제 후 필드 값으로 하나의 `type` 단계로 묶는다. 현재 녹화에서 직접 Workflow를 만드는 경로가 있으며 자동 추출 범위는 의미 대상이 확인된 왼쪽 클릭, 체크박스/라디오 토글, 일반 편집 필드의 텍스트 입력이다. 단계가 참조하는 각 화면 시점은 실제 MP4에서 렌더링한 픽셀 SHA-256과 연결된다. 드래그·휠·키보드 탐색과 픽셀만으로 의미를 추론하는 경로는 아직 연결되지 않았으므로 “임의 녹화 영상을 바로 자동화한다”고 표현해서는 안 된다.
 
 ## 시연 계약
 
@@ -21,6 +21,7 @@
 - 영상 파일 또는 의미 입력 이벤트가 없음
 - 이벤트와 화면 증거의 시간 차이가 허용 범위를 넘음
 - 행동 증거 반영률이 80% 미만
+- 참조 화면 중 실제 MP4 픽셀 해시가 연결된 비율이 80% 미만
 - 입력 대상이 0개 또는 복수임
 - 전후 화면 순서 또는 상태 연결이 끊김
 - 실행 뒤 상태를 이전 상태와 의미적으로 구분할 수 없음
@@ -32,8 +33,9 @@
 
 1. 입력 직전 화면과 의미 대상을 전제조건으로 만든다.
 2. 입력 뒤 새로 생기거나 값이 바뀐 요소, 창 제목, URL 범위를 성공조건으로 만든다.
-3. 단계마다 이벤트 인덱스와 전후 화면 ID를 보존한다.
-4. 원본 영상 SHA-256과 증거 반영률을 Workflow에 저장한다.
+3. 단계마다 모든 원시 이벤트 인덱스와 전후·중간 화면 ID를 보존한다.
+4. 참조 화면 시점의 실제 MP4 렌더링 픽셀 SHA-256과 영상 근거 반영률을 저장한다.
+5. 원본 영상 경로와 파일 SHA-256을 저장하고 실행 직전에 다시 계산해 변조·교체를 거부한다.
 
 지원하는 안전 동작은 `click`, `type`, `select`, `toggle`이다. 대상은 역할·이름·Automation ID로 재탐색하며 좌표를 Workflow에 저장하지 않는다.
 
@@ -69,9 +71,12 @@ Windows 표면은 실행 직전에 다음을 다시 확인한다.
 {
   "id": 2,
   "action": "run_semantic_workflow",
-  "workflow_path": "D:\\recordings\\note.workflow.json"
+  "workflow_path": "D:\\recordings\\note.workflow.json",
+  "source_video_path": "D:\\recordings\\note.mp4"
 }
 ```
+
+`source_video_path`는 Workflow와 영상을 함께 옮긴 경우에만 지정하는 선택 항목이다. 생략하면 Workflow에 기록된 원본 경로를 사용하며, 어느 경우든 저장된 SHA-256과 일치해야 실행된다.
 
 새 녹화를 중지한 뒤 저장된 클릭 의미 증거에서 바로 Workflow를 만든다.
 
@@ -105,7 +110,7 @@ Windows 표면은 실행 직전에 다음을 다시 확인한다.
 
 2026-10-04 대화형 Windows 실행은 2개 시나리오 모두 통과했다. 민감한 런타임 식별자를 제거한 결과는 [`verification/semantic-workflow-windows-2026-10-04.json`](verification/semantic-workflow-windows-2026-10-04.json)에 보존한다.
 
-같은 날 실제 ScreenRecorderLib MP4와 SharpHook 키 이벤트 7개를 녹화하고, 자동 의미 추출로 100% 증거가 연결된 Workflow를 만든 뒤 새 빈 편집기에 재실행하는 종단 간 테스트도 통과했다. 최종 사용자 화면에서 `meeting`과 `저장됨`을 다시 관찰했다. 결과는 [`verification/recording-to-semantic-workflow-2026-10-04.json`](verification/recording-to-semantic-workflow-2026-10-04.json)에 보존하며 다음 명령으로 재현한다.
+같은 날 실제 ScreenRecorderLib MP4와 SharpHook 키 이벤트 7개를 녹화하고, 자동 의미 추출로 입력 이벤트 100%와 참조 화면 16개 모두에 실제 MP4 픽셀 해시가 연결된 Workflow를 만든 뒤 새 빈 편집기에 재실행하는 종단 간 테스트도 통과했다. 실행 직전 원본 영상 SHA-256도 재검증했으며, 최종 사용자 화면에서 `meeting`과 `저장됨`을 다시 관찰했다. 결과는 [`verification/recording-to-semantic-workflow-2026-10-04.json`](verification/recording-to-semantic-workflow-2026-10-04.json)에 보존하며 다음 명령으로 재현한다.
 
 ```powershell
 .\scripts\test-recording-to-semantic-workflow.ps1
@@ -117,5 +122,5 @@ Windows 표면은 실행 직전에 다음을 다시 확인한다.
 
 1. 한글 IME·다국어 조합 입력을 실제 사용자 녹화로 반복 검증한다.
 2. 드래그·휠·키보드 탐색을 의미 동작과 성공조건으로 확장한다.
-3. MP4 프레임 픽셀 근거를 접근성 관찰과 함께 단계별로 해시·연결한다.
+3. 접근성 정보가 일부 부족한 화면에서도 MP4 픽셀로 의미 후보를 제안하되 모호하면 중단하는 추론 계층을 추가한다.
 4. 서로 다른 실제 사용자 앱의 녹화 시작부터 자동 추출·실행 결과까지 완전한 종단 간 검증을 반복한다.

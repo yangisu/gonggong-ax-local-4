@@ -11,7 +11,8 @@ public static class RecordedSemanticWorkflowExtractor
         string videoPath,
         double videoDurationSeconds,
         IReadOnlyList<RecordedEvent> recordedEvents,
-        SemanticDemonstrationFrame finalFrame)
+        SemanticDemonstrationFrame finalFrame,
+        IReadOnlyDictionary<string, string>? videoFrameHashes = null)
     {
         ArgumentNullException.ThrowIfNull(recordedEvents);
         ArgumentNullException.ThrowIfNull(finalFrame);
@@ -52,6 +53,12 @@ public static class RecordedSemanticWorkflowExtractor
                 .Cast<SemanticDemonstrationFrame>())
             .GroupBy(frame => frame.Id, StringComparer.Ordinal)
             .Select(group => group.First())
+            .Select(frame => videoFrameHashes is not null
+                ? frame with
+                {
+                    VideoFrameSha256 = ResolveVideoFrameHash(frame, videoFrameHashes, meaningful, finalFrame),
+                }
+                : frame)
             .ToArray();
         return SemanticWorkflowCompiler.Compile(new SemanticDemonstration(
             naturalLanguageIntent,
@@ -60,6 +67,22 @@ public static class RecordedSemanticWorkflowExtractor
             inputEvents,
             evidenceFrames,
             actions));
+    }
+
+    private static string? ResolveVideoFrameHash(
+        SemanticDemonstrationFrame frame,
+        IReadOnlyDictionary<string, string> hashes,
+        IReadOnlyList<IndexedEvent> events,
+        SemanticDemonstrationFrame finalFrame)
+    {
+        if (hashes.TryGetValue(frame.Id, out var direct)) return direct;
+        return events
+            .SelectMany(item => new[] { item.Event.SemanticBefore, item.Event.SemanticAfter })
+            .Append(finalFrame)
+            .Where(candidate => candidate is not null
+                && Math.Abs(candidate.OffsetSeconds - frame.OffsetSeconds) < .000001)
+            .Select(candidate => hashes.TryGetValue(candidate!.Id, out var hash) ? hash : null)
+            .FirstOrDefault(hash => hash is not null);
     }
 
     private static IReadOnlyList<ExtractedUnit> ExtractUnits(
