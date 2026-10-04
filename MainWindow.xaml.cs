@@ -973,6 +973,24 @@ public partial class MainWindow : Window
             : rawRotation > 0
                 ? "위로"
                 : "아래로";
+        SemanticDemonstrationFrame? semanticBefore = null;
+        SemanticTargetSelector? semanticTarget = null;
+        Guid? semanticCaptureId = null;
+        try
+        {
+            var semantic = WindowsSemanticWorkflowSurface.CaptureScrollableDemonstrationFrame(
+                $"session-{recordingSessionId}-wheel-{recordingClock.ElapsedTicks}",
+                recordingClock.Elapsed.TotalSeconds,
+                e.Data.X,
+                e.Data.Y);
+            semanticBefore = semantic.Frame;
+            semanticTarget = semantic.Target;
+            if (semanticTarget is not null) semanticCaptureId = Guid.NewGuid();
+        }
+        catch
+        {
+            // Raw wheel recording remains available; semantic compilation will reject missing evidence.
+        }
         AddEventFromHook(
             "마우스",
             $"휠 {direction} · 화면 좌표 ({e.Data.X}, {e.Data.Y})",
@@ -982,8 +1000,32 @@ public partial class MainWindow : Window
             MacroActionKind.MouseWheel,
             wheelRotation: normalizedRotation,
             isHorizontalWheel: isHorizontal,
-            modifierKeyCodes: GetPressedModifierCodes()
+            modifierKeyCodes: GetPressedModifierCodes(),
+            semanticBefore: semanticBefore,
+            semanticTarget: semanticTarget,
+            semanticCaptureId: semanticCaptureId
         );
+        if (semanticCaptureId is Guid captureId)
+            _ = CaptureWheelSemanticAfterAsync(captureId, e.Data.X, e.Data.Y);
+    }
+
+    private async Task CaptureWheelSemanticAfterAsync(Guid captureId, int screenX, int screenY)
+    {
+        try
+        {
+            await Task.Delay(350);
+            var after = WindowsSemanticWorkflowSurface.CaptureScrollableDemonstrationFrame(
+                $"session-{recordingSessionId}-wheel-after-{recordingClock.ElapsedTicks}",
+                recordingClock.Elapsed.TotalSeconds,
+                screenX,
+                screenY).Frame;
+            pendingSemanticAfters[captureId] = after;
+            await Dispatcher.InvokeAsync(() => ApplySemanticAfter(captureId, after), DispatcherPriority.Background);
+        }
+        catch
+        {
+            // A missing after-state leaves this wheel event ineligible for semantic extraction.
+        }
     }
 
     private void GlobalHook_KeyPressed(object? sender, KeyboardHookEventArgs e)

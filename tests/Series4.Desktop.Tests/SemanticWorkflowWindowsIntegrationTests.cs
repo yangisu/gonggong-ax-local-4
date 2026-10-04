@@ -81,6 +81,32 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
         });
     }
 
+    [WindowsIntegrationFact]
+    public void RecordedScrollTask_RevealsTheDemonstratedUserOutcomeInARealWindow()
+    {
+        RunWithFixture("scroll", video =>
+        {
+            var target = Selector("List", "업무 목록", "work-list");
+            var before = Frame("scroll-start", .4,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=0"),
+                Element("Text", "목록 시작", "scroll-status"));
+            var after = Frame("scroll-end", .9,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=10"),
+                Element("Text", "아래 항목 표시됨", "scroll-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "업무 목록을 내려 아래 항목을 보여 줘", video, 1.5,
+                [RecordedWheel(1, .6, -120, before, after, target)],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Contains(visible.Elements, element => element.Name == "아래 항목 표시됨");
+        });
+    }
+
     private static void RunWithFixture(string mode, Action<string> test)
     {
         var executable = FixtureExecutable();
@@ -167,6 +193,28 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
             Message = $"키 입력 · {key}",
             ActionKind = MacroActionKind.KeyStroke,
             KeyCodes = [key],
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static RecordedEvent RecordedWheel(
+        long sequence,
+        double offset,
+        int rotation,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "휠 아래로",
+            ActionKind = MacroActionKind.MouseWheel,
+            WheelRotation = rotation,
             Sequence = sequence,
             CaptureWidth = 1920,
             CaptureHeight = 1080,

@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 2,
-  "passed": 2,
+  "total": 3,
+  "passed": 3,
   "failed": 0,
   "scenarios": [
     {
@@ -21,6 +21,14 @@
       "visibleUserOutcome": {
         "toggleValue": "On",
         "status": "어두운 모드 사용 중"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "업무 목록을 내려 아래 항목을 보여 줘",
+      "workflowSource": "semantic demonstration with synchronized wheel and before/after screen evidence",
+      "visibleUserOutcome": {
+        "status": "아래 항목 표시됨"
       },
       "result": "PASS"
     }

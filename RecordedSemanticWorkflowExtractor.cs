@@ -5,6 +5,7 @@ namespace Series4.Desktop;
 public static class RecordedSemanticWorkflowExtractor
 {
     private static readonly TimeSpan MaximumTextKeyGap = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaximumWheelGap = TimeSpan.FromSeconds(1);
 
     public static SemanticWorkflowDefinition Compile(
         string naturalLanguageIntent,
@@ -159,6 +160,38 @@ public static class RecordedSemanticWorkflowExtractor
                 continue;
             }
 
+            if (current.Event.ActionKind == MacroActionKind.MouseWheel)
+            {
+                RequireScrollEvidence(current.Event);
+                var group = new List<IndexedEvent> { current };
+                var cursor = index + 1;
+                while (cursor < events.Count
+                    && events[cursor].Event.ActionKind == MacroActionKind.MouseWheel
+                    && SameTarget(current.Event.SemanticTarget!, events[cursor].Event.SemanticTarget)
+                    && current.Event.IsHorizontalWheel == events[cursor].Event.IsHorizontalWheel
+                    && Math.Sign(current.Event.WheelRotation) == Math.Sign(events[cursor].Event.WheelRotation)
+                    && events[cursor].Event.Offset - events[cursor - 1].Event.Offset <= MaximumWheelGap)
+                {
+                    RequireScrollEvidence(events[cursor].Event);
+                    group.Add(events[cursor]);
+                    cursor++;
+                }
+                var after = group[^1].Event.SemanticAfter
+                    ?? throw new InvalidOperationException("휠 입력 뒤 의미 화면을 확인할 수 없습니다.");
+                var notches = Math.Clamp(group.Count, 1, 20);
+                var axis = current.Event.IsHorizontalWheel ? "horizontal" : "vertical";
+                var direction = current.Event.WheelRotation < 0 ? "increment" : "decrement";
+                units.Add(new ExtractedUnit(
+                    group,
+                    "scroll",
+                    current.Event.SemanticTarget!,
+                    new SemanticScrollCommand(axis, direction, notches).ToString(),
+                    current.Event.SemanticBefore!,
+                    after));
+                index = cursor;
+                continue;
+            }
+
             throw new InvalidOperationException(
                 $"현재 자동 추출기가 지원하지 않는 녹화 이벤트입니다: {current.Event.Sequence}({current.Event.ActionKind})");
         }
@@ -222,6 +255,16 @@ public static class RecordedSemanticWorkflowExtractor
             throw new InvalidOperationException($"이벤트 {item.Sequence}의 대상은 검증 가능한 편집 필드가 아닙니다.");
         if (SensitiveTarget(item.SemanticTarget.Name))
             throw new InvalidOperationException($"민감 입력 필드는 의미 Workflow로 만들 수 없습니다: {item.SemanticTarget.Name}");
+    }
+
+    private static void RequireScrollEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 스크롤 전후 의미 증거가 없습니다.");
+        if (item.WheelRotation == 0)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 스크롤 방향을 확인할 수 없습니다.");
+        if (item.ModifierKeyCodes.Length > 0)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 스크롤은 자동 변환하지 않습니다.");
     }
 
     private static bool SameTextTarget(RecordedEvent first, RecordedEvent second) =>

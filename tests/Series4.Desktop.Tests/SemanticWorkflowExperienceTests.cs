@@ -247,6 +247,63 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedWheelEvents_BecomeOneSemanticScrollWithAVisibleOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("List", "업무 목록", "work-list");
+            var before = Frame("scroll-start", .4,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=0"),
+                Element("Text", "목록 시작", "scroll-status"));
+            var middle = Frame("scroll-middle", .65,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=8"));
+            var after = Frame("scroll-end", .9,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=16"),
+                Element("Text", "아래 항목 표시됨", "scroll-status"));
+            var recorded = new[]
+            {
+                RecordedWheel(1, .5, -120, before, middle, target),
+                RecordedWheel(2, .75, -120, middle, after, target),
+            };
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "업무 목록을 내려 아래 항목을 보여 줘", video, 1.2, recorded, after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("scroll", step.Action.Kind);
+            Assert.Equal("vertical:increment:2", step.Action.Value);
+            Assert.Equal([0, 1], step.Evidence.EventIndices);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "아래 항목 표시됨");
+        });
+    }
+
+    [Fact]
+    public void ScrollWithOnlyAPercentageChange_IsRejectedAsUnverifiableUserOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("List", "업무 목록", "work-list");
+            var before = Frame("scroll-only-start", .4,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=0"));
+            var after = Frame("scroll-only-end", .9,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=15"));
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "업무 목록을 아래로 내려 줘",
+                    video,
+                    1.2,
+                    [RecordedWheel(1, .5, -120, before, after, target)],
+                    after));
+
+            Assert.Contains("구분할 근거", error.Message);
+        });
+    }
+
+    [Fact]
     public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
     {
         WithVideo(video =>
@@ -352,6 +409,28 @@ public sealed class SemanticWorkflowExperienceTests
             Message = $"키 입력 · {key}",
             ActionKind = MacroActionKind.KeyStroke,
             KeyCodes = [key],
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static RecordedEvent RecordedWheel(
+        long sequence,
+        double offset,
+        int rotation,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "휠 아래로",
+            ActionKind = MacroActionKind.MouseWheel,
+            WheelRotation = rotation,
             Sequence = sequence,
             CaptureWidth = 1920,
             CaptureHeight = 1080,

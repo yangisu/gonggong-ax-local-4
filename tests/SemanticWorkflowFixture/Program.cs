@@ -11,6 +11,7 @@ public static class Program
 {
     private const uint MouseLeftDown = 0x0002;
     private const uint MouseLeftUp = 0x0004;
+    private const uint MouseWheel = 0x0800;
     private const uint KeyUp = 0x0002;
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
@@ -22,11 +23,12 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode == "editor-demo";
+        var selfDemonstrating = mode is "editor-demo" or "scroll-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
             "settings" => SettingsContent(),
+            "scroll" or "scroll-demo" => ScrollContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
@@ -45,6 +47,21 @@ public static class Program
             {
                 await Task.Delay(1000);
                 SetForegroundWindow(new WindowInteropHelper(window).Handle);
+                if (mode == "scroll-demo")
+                {
+                    var list = FindDescendant<ListBox>(window)
+                        ?? throw new InvalidOperationException("업무 목록을 찾지 못했습니다.");
+                    var point = list.PointToScreen(new Point(list.ActualWidth / 2, list.ActualHeight / 2));
+                    SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y));
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        mouse_event(MouseWheel, 0, 0, unchecked((uint)-120), UIntPtr.Zero);
+                        Thread.Sleep(500);
+                        mouse_event(MouseWheel, 0, 0, unchecked((uint)-120), UIntPtr.Zero);
+                    });
+                    return;
+                }
                 var editor = FindDescendant<TextBox>(window)
                     ?? throw new InvalidOperationException("메모 편집기를 찾지 못했습니다.");
                 editor.Focus();
@@ -139,6 +156,29 @@ public static class Program
             AutomationProperties.SetName(status, status.Text);
         };
         panel.Children.Add(toggle);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement ScrollContent()
+    {
+        var panel = Panel("업무 목록");
+        var list = Named(new ListBox
+        {
+            Width = 440,
+            Height = 150,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            ItemsSource = Enumerable.Range(1, 40).Select(index => $"업무 항목 {index}").ToArray(),
+        }, "work-list", "업무 목록");
+        ScrollViewer.SetVerticalScrollBarVisibility(list, ScrollBarVisibility.Visible);
+        var status = Named(new TextBlock { Text = "목록 시작", FontSize = 18 }, "scroll-status", "목록 시작");
+        list.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, args) =>
+        {
+            if (args.VerticalOffset <= 0) return;
+            status.Text = "아래 항목 표시됨";
+            AutomationProperties.SetName(status, status.Text);
+        }));
+        panel.Children.Add(list);
         panel.Children.Add(status);
         return panel;
     }

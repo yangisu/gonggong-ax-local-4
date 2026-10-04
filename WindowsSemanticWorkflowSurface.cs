@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -156,6 +157,36 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             target);
     }
 
+    public static (SemanticDemonstrationFrame Frame, SemanticTargetSelector? Target) CaptureScrollableDemonstrationFrame(
+        string id,
+        double offsetSeconds,
+        double screenX,
+        double screenY)
+    {
+        var observation = ObserveOnce();
+        var root = ForegroundRoot();
+        var processId = root.Current.ProcessId;
+        var element = AutomationElement.FromPoint(new System.Windows.Point(screenX, screenY));
+        while (element is not null && element.Current.ProcessId == processId)
+        {
+            if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out _)
+                && !element.Current.IsPassword
+                && element.Current.IsEnabled
+                && !string.IsNullOrWhiteSpace(element.Current.Name))
+            {
+                var automationId = element.Current.AutomationId ?? string.Empty;
+                var target = new SemanticTargetSelector(
+                    [Role(element)],
+                    element.Current.Name,
+                    string.IsNullOrWhiteSpace(automationId) ? null : automationId,
+                    element.Current.IsOffscreen);
+                return (ToFrame(id, offsetSeconds, observation), target);
+            }
+            element = TreeWalker.ControlViewWalker.GetParent(element);
+        }
+        return (ToFrame(id, offsetSeconds, observation), null);
+    }
+
     public void Execute(SemanticPlannedAction action, SemanticWorkflowObservation observation)
     {
         var current = Observe();
@@ -200,6 +231,20 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             case "click":
                 InvokeOrClick(element);
                 break;
+            case "scroll":
+                if (!SemanticScrollCommand.TryParse(action.Value, out var command))
+                    throw new InvalidOperationException("스크롤 동작 값이 올바르지 않습니다.");
+                if (!element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
+                    throw new InvalidOperationException("TARGET_MISMATCH: 대상이 의미 기반 스크롤을 지원하지 않습니다.");
+                var scroll = (ScrollPattern)scrollPattern;
+                var increment = command.Direction == "increment"
+                    ? ScrollAmount.SmallIncrement
+                    : ScrollAmount.SmallDecrement;
+                for (var index = 0; index < command.Count; index++)
+                    scroll.Scroll(
+                        command.Axis == "horizontal" ? increment : ScrollAmount.NoAmount,
+                        command.Axis == "vertical" ? increment : ScrollAmount.NoAmount);
+                break;
             default:
                 throw new InvalidOperationException($"지원하지 않는 의미 동작입니다: {action.Kind}");
         }
@@ -219,6 +264,24 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         var url = ReadActiveUrl(root);
         return new SemanticWorkflowObservation(process, title, url, elements, Revision(process, title, url, elements));
     }
+
+    private static SemanticDemonstrationFrame ToFrame(
+        string id,
+        double offsetSeconds,
+        SemanticWorkflowObservation observation) => new(
+            id,
+            offsetSeconds,
+            observation.ProcessName,
+            observation.WindowTitle,
+            observation.Url,
+            observation.Elements.Select(element => new SemanticElementEvidence(
+                element.Role,
+                element.Name,
+                element.AutomationId,
+                element.Value,
+                element.Enabled,
+                element.Offscreen,
+                element.Password)).ToArray());
 
     private static AutomationElement ForegroundRoot()
     {
@@ -303,6 +366,12 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             }
             if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
+            if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
+            {
+                var current = ((ScrollPattern)scrollPattern).Current;
+                return string.Create(CultureInfo.InvariantCulture,
+                    $"horizontal={current.HorizontalScrollPercent:0.###};vertical={current.VerticalScrollPercent:0.###}");
+            }
             return string.Empty;
         }
         catch (ElementNotAvailableException) { return string.Empty; }

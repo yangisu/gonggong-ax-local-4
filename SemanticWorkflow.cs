@@ -94,6 +94,25 @@ public sealed record SemanticWorkflowActionDefinition(
     SemanticTargetSelector? Target,
     string? Value);
 
+public sealed record SemanticScrollCommand(string Axis, string Direction, int Count)
+{
+    public override string ToString() => $"{Axis}:{Direction}:{Count}";
+
+    public static bool TryParse(string? value, out SemanticScrollCommand command)
+    {
+        command = new SemanticScrollCommand(string.Empty, string.Empty, 0);
+        var parts = value?.Split(':', StringSplitOptions.TrimEntries) ?? [];
+        if (parts.Length != 3
+            || parts[0] is not ("horizontal" or "vertical")
+            || parts[1] is not ("increment" or "decrement")
+            || !int.TryParse(parts[2], out var count)
+            || count is < 1 or > 20)
+            return false;
+        command = new SemanticScrollCommand(parts[0], parts[1], count);
+        return true;
+    }
+}
+
 public sealed record SemanticWorkflowStepDefinition(
     string Id,
     string FromStateId,
@@ -168,7 +187,7 @@ public static class SemanticWorkflowCompiler
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "select", "toggle",
+        "click", "type", "select", "toggle", "scroll",
     };
 
     private static readonly string[] IrreversibleTerms =
@@ -214,6 +233,8 @@ public static class SemanticWorkflowCompiler
             ValidateSelector(action.Target, action.Id);
             if (action.Kind is "type" or "select" && string.IsNullOrEmpty(action.Value))
                 throw new InvalidOperationException($"단계 {action.Id}에 입력 값이 없습니다.");
+            if (action.Kind == "scroll" && !SemanticScrollCommand.TryParse(action.Value, out _))
+                throw new InvalidOperationException($"단계 {action.Id}의 스크롤 값이 올바르지 않습니다.");
             if (!frameById.TryGetValue(action.BeforeFrameId, out var beforeItems)
                 || !frameById.TryGetValue(action.AfterFrameId, out var afterItems))
                 throw new InvalidOperationException($"단계 {action.Id}가 존재하지 않는 화면 증거를 참조합니다.");
@@ -273,7 +294,11 @@ public static class SemanticWorkflowCompiler
             var after = frameById[action.AfterFrameId][0];
             var precondition = BuildPredicate(before, previous: null, requiredTarget: action.Target);
             var nextTarget = index + 1 < demonstration.Actions.Count ? demonstration.Actions[index + 1].Target : null;
-            var success = BuildPredicate(after, before, nextTarget);
+            var success = BuildPredicate(
+                after,
+                before,
+                nextTarget,
+                action.Kind.Equals("scroll", StringComparison.OrdinalIgnoreCase) ? action.Target : null);
             if (!Distinguishes(success, before))
                 throw new InvalidOperationException($"단계 {action.Id} 이후의 의미 상태를 이전 상태와 구분할 근거가 없습니다.");
             steps.Add(new SemanticWorkflowStepDefinition(
@@ -325,7 +350,8 @@ public static class SemanticWorkflowCompiler
     private static SemanticStatePredicate BuildPredicate(
         SemanticDemonstrationFrame frame,
         SemanticDemonstrationFrame? previous,
-        SemanticTargetSelector? requiredTarget)
+        SemanticTargetSelector? requiredTarget,
+        SemanticTargetSelector? ignoredChangedTarget = null)
     {
         var required = new List<SemanticTargetSelector>();
         if (requiredTarget is not null) required.Add(requiredTarget);
@@ -335,7 +361,9 @@ public static class SemanticWorkflowCompiler
             required.AddRange(frame.Elements
                 .Where(element => element.Enabled && !element.Offscreen && !element.Password && !string.IsNullOrWhiteSpace(element.Name))
                 .Where(element => !previousIdentities.Contains(Identity(element)))
+                .Where(element => ignoredChangedTarget is null || !Matches(element, ignoredChangedTarget))
                 .Where(element => !required.Any(selector => Matches(element, selector)))
+                .OrderByDescending(element => !string.IsNullOrWhiteSpace(element.AutomationId))
                 .Take(3)
                 .Select(ToSelector));
         }
