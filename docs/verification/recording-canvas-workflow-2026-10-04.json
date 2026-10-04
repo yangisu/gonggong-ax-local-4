@@ -1,0 +1,22 @@
+{
+  "executedAt": "2026-10-04T15:09:24.9230211+09:00",
+  "scenario": "canvas",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook pointer drag + automatic UI Automation surface bounds and semantic outcome evidence",
+  "recordedEventCount": 2,
+  "sourceVideoSha256": "7b14fb3ec037dc044c2f373117e991204c933452e7df24708f3e969f866194d8",
+  "stepCount": 1,
+  "action": {
+    "kind": "drag-within",
+    "value": "0.149188,0.502222,0.748892,0.502222",
+    "containsAbsoluteScreenCoordinates": false
+  },
+  "evidenceCoverage": 1,
+  "videoEvidenceCoverage": 1,
+  "videoEvidenceFrameCount": 4,
+  "demonstrationWindow": "640x420",
+  "replayWindow": "820x500",
+  "runStatus": "SUCCESS",
+  "visibleControlValue": "relative-surface-drag",
+  "visibleStatus": "도형 위치: 오른쪽",
+  "passed": true
+}

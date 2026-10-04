@@ -586,6 +586,10 @@ public static class MacroProjectStore
             CaptureTop = recordedEvent.CaptureTop,
             CaptureWidth = recordedEvent.CaptureWidth,
             CaptureHeight = recordedEvent.CaptureHeight,
+            SemanticBefore = recordedEvent.SemanticBefore,
+            SemanticTarget = recordedEvent.SemanticTarget,
+            SemanticAfter = recordedEvent.SemanticAfter,
+            SemanticCaptureId = recordedEvent.SemanticCaptureId,
         };
     }
 
@@ -645,6 +649,10 @@ public static class MacroProjectStore
             CaptureTop = dto.CaptureTop,
             CaptureWidth = dto.CaptureWidth,
             CaptureHeight = dto.CaptureHeight,
+            SemanticBefore = dto.SemanticBefore,
+            SemanticTarget = dto.SemanticTarget,
+            SemanticAfter = dto.SemanticAfter,
+            SemanticCaptureId = dto.SemanticCaptureId,
         };
 
         SetOptionalProperty(
@@ -942,6 +950,14 @@ public sealed class RecordedEventDto
     public int CaptureWidth { get; set; }
 
     public int CaptureHeight { get; set; }
+
+    public SemanticDemonstrationFrame? SemanticBefore { get; set; }
+
+    public SemanticTargetSelector? SemanticTarget { get; set; }
+
+    public SemanticDemonstrationFrame? SemanticAfter { get; set; }
+
+    public Guid? SemanticCaptureId { get; set; }
 }
 
 public sealed class MousePathPointDto

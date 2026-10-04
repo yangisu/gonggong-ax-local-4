@@ -1,0 +1,23 @@
+{
+  "executedAt": "2026-10-04T00:42:12+09:00",
+  "environment": "Windows 11, Google Chrome, Korean Google/Sheets UI",
+  "iterations": 10,
+  "successes": 10,
+  "wrongTargetExecutions": 0,
+  "unknownExecutionSafety": 0,
+  "distinctWindowBounds": 10,
+  "passed": true,
+  "runs": [
+    { "iteration": 1, "status": "SUCCESS", "bounds": [40, 35, 960, 735], "tabOrder": "google-newtab-decoy", "verifiedSteps": 4 },
+    { "iteration": 2, "status": "SUCCESS", "bounds": [95, 80, 1125, 860], "tabOrder": "google-decoy", "verifiedSteps": 4 },
+    { "iteration": 3, "status": "SUCCESS", "bounds": [150, 125, 1290, 985], "tabOrder": "google-newtab-decoy", "verifiedSteps": 4 },
+    { "iteration": 4, "status": "SUCCESS", "bounds": [205, 35, 1455, 735], "tabOrder": "google-decoy", "verifiedSteps": 4 },
+    { "iteration": 5, "status": "SUCCESS", "bounds": [260, 80, 1180, 860], "tabOrder": "google-newtab-decoy", "verifiedSteps": 4 },
+    { "iteration": 6, "status": "SUCCESS", "bounds": [40, 125, 1070, 985], "tabOrder": "google-decoy", "verifiedSteps": 4 },
+    { "iteration": 7, "status": "SUCCESS", "bounds": [95, 35, 1235, 735], "tabOrder": "google-newtab-decoy", "verifiedSteps": 4 },
+    { "iteration": 8, "status": "SUCCESS", "bounds": [150, 80, 1400, 860], "tabOrder": "google-decoy", "verifiedSteps": 4 },
+    { "iteration": 9, "status": "SUCCESS", "bounds": [205, 125, 1125, 985], "tabOrder": "google-newtab-decoy", "verifiedSteps": 4 },
+    { "iteration": 10, "status": "SUCCESS", "bounds": [260, 35, 1290, 735], "tabOrder": "google-decoy", "verifiedSteps": 4 }
+  ],
+  "sourceArtifacts": "artifacts/google-sheets-integration-final-v2 (local, ignored by git because journals contain live URLs and runtime identifiers)"
+}

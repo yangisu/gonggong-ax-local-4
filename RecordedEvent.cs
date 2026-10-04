@@ -215,6 +215,14 @@ public sealed class RecordedEvent : INotifyPropertyChanged
 
     public int CaptureHeight { get; set; }
 
+    public SemanticDemonstrationFrame? SemanticBefore { get; set; }
+
+    public SemanticTargetSelector? SemanticTarget { get; set; }
+
+    public SemanticDemonstrationFrame? SemanticAfter { get; set; }
+
+    public Guid? SemanticCaptureId { get; set; }
+
     public string TimeText
     {
         get

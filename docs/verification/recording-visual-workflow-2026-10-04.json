@@ -1,0 +1,64 @@
+{
+  "executedAt": "2026-10-04",
+  "feature": "video-synchronized visual target re-identification",
+  "successfulReplay": {
+    "executedAt": "2026-10-04T15:34:30.0192454+09:00",
+    "source": "actual ScreenRecorderLib MP4 + SharpHook drag + synchronized foreground pixel patch",
+    "sourceVideoSha256": "4abef2d1fb68a05f8d5b5eaa577da68763d461014473cc4e2e32dbb32513b531",
+    "recordedEventCount": 2,
+    "action": {
+      "kind": "visual-drag",
+      "relativeWindowEndpoint": "0.71125,0.52381",
+      "visualAnchor": {
+        "version": 1,
+        "sampleSize": 13,
+        "spanPixels": 80,
+        "templateBytes": 169,
+        "maximumAverageDifference": 10,
+        "clusterRadius": 30
+      },
+      "containsRecordedAbsoluteCoordinates": false
+    },
+    "evidenceCoverage": 1,
+    "videoEvidenceCoverage": 1,
+    "videoEvidenceFrameCount": 4,
+    "demonstrationWindow": "640x420",
+    "replayWindow": "820x420",
+    "runStatus": "SUCCESS",
+    "visibleStatus": "도형 위치: 오른쪽",
+    "passed": true
+  },
+  "successfulClickReplay": {
+    "executedAt": "2026-10-04T15:38:55.3475721+09:00",
+    "source": "actual ScreenRecorderLib MP4 + SharpHook click + synchronized foreground pixel patch",
+    "sourceVideoSha256": "c8f679dbfbecff134bfa8969aa6f314329e7e2bee23ffbea16191d42e4de71fa",
+    "recordedEventCount": 2,
+    "action": "visual-click",
+    "evidenceCoverage": 1,
+    "videoEvidenceCoverage": 1,
+    "videoEvidenceFrameCount": 3,
+    "demonstrationWindow": "640x420",
+    "replayWindow": "820x420",
+    "runStatus": "SUCCESS",
+    "visibleStatus": "실행됨",
+    "passed": true
+  },
+  "ambiguousAtRecording": {
+    "executedAt": "2026-10-04T15:34:53.973602+09:00",
+    "source": "actual recording with two indistinguishable blue shapes",
+    "compileStatus": "REJECTED",
+    "replayStarted": false,
+    "wrongTargetExecutions": 0,
+    "passed": true
+  },
+  "ambiguousAtReplay": {
+    "executedAt": "2026-10-04T15:35:18.8225179+09:00",
+    "sourceVideoSha256": "4af56f09699b4bcecd01900e50f2c23d431ea19bc69ee74582c536a233ffb326",
+    "source": "actual unique-target recording replayed in a fresh window with two indistinguishable blue shapes",
+    "runStatus": "EXECUTION_FAILED",
+    "journalExecution": "TARGET_MISMATCH: 현재 화면의 시각 대상 후보가 2개입니다.",
+    "visibleStatus": "도형 위치: 왼쪽",
+    "wrongTargetExecutions": 0,
+    "passed": true
+  }
+}

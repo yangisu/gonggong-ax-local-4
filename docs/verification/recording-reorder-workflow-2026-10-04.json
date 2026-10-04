@@ -1,0 +1,25 @@
+{
+  "executedAt": "2026-10-04T14:55:12.6725159+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook list-item drag + automatic UI Automation ordinal evidence",
+  "intent": "업무 B를 목록 마지막으로 이동해 줘",
+  "recordedEventCount": 2,
+  "meaningfulDragEventCount": 1,
+  "workflowStepCount": 1,
+  "workflowAction": "reorder-item",
+  "workflowTarget": "업무 B",
+  "workflowFinalOrdinal": 3,
+  "rawCoordinatesStoredInWorkflow": false,
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 4,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "1a009ab1250f2a09c9451ba4c43d4836dba24935afd76baa44a971db87c2c84b",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "movedItemValue": "ordinal=3",
+    "status": "순서: A,C,D,B"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-reorder-workflow-final (local, ignored by git)"
+}

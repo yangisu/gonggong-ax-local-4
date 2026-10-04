@@ -1,0 +1,126 @@
+{
+  "executedAt": "2026-10-04",
+  "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
+  "testSuite": "SemanticWorkflowWindowsIntegrationTests",
+  "total": 12,
+  "passed": 12,
+  "failed": 0,
+  "scenarios": [
+    {
+      "intent": "새 메모를 만들고 회의록이라고 입력해 줘",
+      "workflowSource": "semantic demonstration with synchronized click and text events",
+      "visibleUserOutcome": {
+        "editorValue": "회의록",
+        "status": "저장됨"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "메모에 회의록이라고 입력해 줘",
+      "workflowSource": "semantic demonstration with Korean IME composition intermediates and final editor value evidence",
+      "visibleUserOutcome": {
+        "editorValue": "회의록",
+        "status": "한글 저장됨"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "설정에서 어두운 모드를 켜 줘",
+      "workflowSource": "independent semantic demonstration with a synchronized toggle event",
+      "visibleUserOutcome": {
+        "toggleValue": "On",
+        "status": "어두운 모드 사용 중"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "업무 목록을 내려 아래 항목을 보여 줘",
+      "workflowSource": "semantic demonstration with synchronized wheel and before/after screen evidence",
+      "visibleUserOutcome": {
+        "status": "아래 항목 표시됨"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "키보드로 어두운 모드를 켜 줘",
+      "workflowSource": "semantic demonstration with a synchronized Space key and focused checkbox evidence",
+      "visibleUserOutcome": {
+        "toggleValue": "On",
+        "status": "어두운 모드 사용 중"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "음량을 75로 높여 줘",
+      "workflowSource": "semantic demonstration with a synchronized slider drag and RangeValue evidence",
+      "visibleUserOutcome": {
+        "sliderValue": "75",
+        "status": "음량 75"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "업무 B를 목록 마지막으로 이동해 줘",
+      "workflowSource": "semantic demonstration with synchronized list-item drag and before/after ordinal evidence",
+      "visibleUserOutcome": {
+        "movedItem": "업무 B",
+        "finalOrdinal": 3,
+        "status": "순서: A,C,D,B"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "도형을 작업 영역 오른쪽으로 이동해 줘",
+      "workflowSource": "semantic demonstration with synchronized surface drag, normalized in-surface endpoints, and before/after user outcome evidence",
+      "visibleUserOutcome": {
+        "action": "drag-within",
+        "demonstrationBounds": "400x200",
+        "replayWindow": "820x500",
+        "status": "도형 위치: 오른쪽"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "영상에서 본 파란 도형을 오른쪽으로 이동해 줘",
+      "workflowSource": "synchronized grayscale visual anchor on an otherwise inaccessible shape, plus semantic before/after user outcome evidence",
+      "visibleUserOutcome": {
+        "action": "visual-drag",
+        "targetAccessibility": "window only; shape absent from UI Automation",
+        "status": "도형 위치: 오른쪽"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "색상을 파랑으로 선택해 줘",
+      "workflowSource": "semantic demonstration with synchronized arrow keys and final option evidence",
+      "visibleUserOutcome": {
+        "selectedValue": "파랑",
+        "status": "선택: 파랑"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "Tab으로 검색 버튼까지 이동해 줘",
+      "workflowSource": "semantic demonstration with synchronized Tab keys and normalized focused-element evidence",
+      "visibleUserOutcome": {
+        "focusedAutomationId": "focus-search",
+        "keyboardFocused": true,
+        "status": "포커스: 검색"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "접근성 정보가 없는 화면 결과를 만들어 줘",
+      "workflowSource": "synchronized 96x64 grayscale window signatures with a changed-pixel mask; UI Automation outcome unchanged",
+      "visibleUserOutcome": {
+        "action": "click",
+        "accessibilityOutcomeChanged": false,
+        "beforeExpectedDifference": 110.5952380952381,
+        "afterExpectedDifference": 0,
+        "visualStateMatched": true
+      },
+      "result": "PASS"
+    }
+  ],
+  "rawArtifact": "artifacts/semantic-workflow-windows/semantic-workflow-windows.trx (local, ignored by git)"
+}

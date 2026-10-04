@@ -1,0 +1,23 @@
+{
+  "executedAt": "2026-10-04T14:13:06.2579445+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook arrow key events + automatic UI Automation evidence",
+  "intent": "색상을 파랑으로 선택해 줘",
+  "recordedEventCount": 3,
+  "meaningfulKeyEventCount": 2,
+  "workflowStepCount": 1,
+  "workflowAction": "select-option",
+  "workflowValue": "파랑",
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 6,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "bce45c1050e0ebda35ce91a12405f9112c5113edc414600299378f2ff1bd76f1",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "selectedValue": "파랑",
+    "status": "선택: 파랑"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-selection-workflow (local, ignored by git)"
+}

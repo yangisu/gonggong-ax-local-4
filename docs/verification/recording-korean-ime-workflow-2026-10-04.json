@@ -1,0 +1,24 @@
+{
+  "executedAt": "2026-10-04T14:36:10.2953158+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF, Microsoft Korean IME",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook Korean IME key events + automatic UI Automation evidence",
+  "intent": "메모에 회의록이라고 입력해 줘",
+  "keyboardInput": "Korean Dubeolsik composition from ghldmlfhr, followed by Enter to commit",
+  "recordedEventCount": 11,
+  "meaningfulKeyEventCount": 10,
+  "workflowStepCount": 1,
+  "workflowAction": "type",
+  "workflowValue": "회의록",
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 22,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "899ec2d694d3a686f2ca5539b32b7915fd7e54e74a066f784bb95e612be496c5",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "editorValue": "회의록",
+    "status": "한글 저장됨"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-korean-workflow (local, ignored by git)"
+}

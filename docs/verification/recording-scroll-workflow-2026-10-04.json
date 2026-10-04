@@ -1,0 +1,21 @@
+{
+  "executedAt": "2026-10-04T13:53:37.5015329+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook wheel events + automatic UI Automation evidence",
+  "intent": "업무 목록을 내려 아래 항목을 보여 줘",
+  "recordedEventCount": 3,
+  "meaningfulWheelEventCount": 2,
+  "workflowStepCount": 1,
+  "workflowAction": "scroll",
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 6,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "025c66516fb6b66278eb13dd77e14fe138364577c8dab2863b1478a3e32db7db",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "status": "아래 항목 표시됨"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-scroll-workflow (local, ignored by git)"
+}

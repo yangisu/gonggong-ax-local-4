@@ -1,0 +1,24 @@
+{
+  "executedAt": "2026-10-04T14:30:49.2615662+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook Tab key events + automatic UI Automation evidence",
+  "intent": "Tab으로 검색 버튼까지 이동해 줘",
+  "recordedEventCount": 3,
+  "meaningfulKeyEventCount": 2,
+  "workflowStepCount": 1,
+  "workflowAction": "focus",
+  "workflowTargetAutomationId": "focus-search",
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 6,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "d9b19edb7fc19f2afc14cf7838f77091cfb694b3d18cee47fca5cc95c7b3d74b",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "focusedAutomationId": "focus-search",
+    "keyboardFocused": true,
+    "status": "포커스: 검색"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-focus-workflow-final (local, ignored by git)"
+}

@@ -1,0 +1,1107 @@
+using Series4.Desktop;
+using SharpHook.Data;
+using Xunit;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace Series4.Desktop.Tests;
+
+public sealed class SemanticWorkflowExperienceTests
+{
+    [Fact]
+    public void OneNotepadDemonstration_BecomesAReusableWorkflowThatProducesTheUserOutcome()
+    {
+        WithVideo(video =>
+        {
+            var demonstration = new SemanticDemonstration(
+                "새 메모를 만들고 회의록이라고 입력해 줘",
+                video,
+                2,
+                [new(0, .5, "MouseLeftClick"), new(1, 1.1, "TextEntry")],
+                [
+                    Frame("start", .3, Element("Button", "새 메모", "new")),
+                    Frame("editor", .8,
+                        Element("Button", "새 메모", "new"),
+                        Element("Edit", "메모 내용", "editor"),
+                        Element("Text", "새 메모 편집 중", "editing")),
+                    Frame("typed", 1.3,
+                        Element("Button", "새 메모", "new"),
+                        Element("Edit", "메모 내용", "editor", "회의록"),
+                        Element("Text", "저장됨", "saved")),
+                ],
+                [
+                    new("create-note", 0, .5, "click", Selector("Button", "새 메모", "new"), null, "start", "editor"),
+                    new("enter-note", 1, 1.1, "type", Selector("Edit", "메모 내용", "editor"), "회의록", "editor", "typed"),
+                ]);
+
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var surface = new ExperienceSurface(demonstration.Frames, demonstration.Actions, reverseElements: true);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("회의록", surface.Value("editor"));
+            Assert.Equal(["create-note", "enter-note"], surface.ExecutedSteps);
+            Assert.Equal(0, surface.WrongTargetExecutions);
+            Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
+            Assert.Equal(1, workflow.VideoEvidenceCoverage.Coverage);
+            Assert.All(workflow.VideoEvidence, evidence => Assert.Equal(64, evidence.VideoFrameSha256.Length));
+            Assert.All(result.Journal.Where(item => item.Phase == "verification"),
+                item => Assert.StartsWith("success", item.Verification));
+        });
+    }
+
+    [Fact]
+    public void ASeparateSettingsDemonstration_UsesTheSameEngineAndVerifiesTheVisibleResult()
+    {
+        WithVideo(video =>
+        {
+            var demonstration = new SemanticDemonstration(
+                "설정에서 어두운 모드를 켜 줘",
+                video,
+                1.5,
+                [new(0, .6, "MouseLeftClick")],
+                [
+                    Frame("light", .4,
+                        Element("Button", "어두운 모드", "dark-mode", "끔"),
+                        Element("Text", "화면 설정", "heading")),
+                    Frame("dark", .9,
+                        Element("Button", "어두운 모드", "dark-mode", "켬"),
+                        Element("Text", "어두운 모드 사용 중", "status")),
+                ],
+                [new("enable-dark-mode", 0, .6, "toggle", Selector("Button", "어두운 모드", "dark-mode"), null, "light", "dark")]);
+
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var surface = new ExperienceSurface(demonstration.Frames, demonstration.Actions);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("켬", surface.Value("dark-mode"));
+            Assert.Contains(surface.Current.Elements, element => element.Name == "어두운 모드 사용 중");
+            Assert.Equal(0, surface.WrongTargetExecutions);
+        });
+    }
+
+    [Fact]
+    public void AlreadyAchievedUserState_IsRecognizedWithoutRepeatingTheAction()
+    {
+        WithVideo(video =>
+        {
+            var demonstration = DarkModeDemonstration(video);
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var surface = new ExperienceSurface(demonstration.Frames, demonstration.Actions, initialState: 1);
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Empty(surface.ExecutedSteps);
+            Assert.Equal("켬", surface.Value("dark-mode"));
+        });
+    }
+
+    [Fact]
+    public void AmbiguousCurrentTarget_StopsBeforeAnythingVisibleChanges()
+    {
+        WithVideo(video =>
+        {
+            var demonstration = DarkModeDemonstration(video);
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var surface = new ExperienceSurface(demonstration.Frames, demonstration.Actions, duplicateTarget: true);
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("ABSTAINED", result.Status);
+            Assert.Empty(surface.ExecutedSteps);
+            Assert.Equal("끔", surface.Value("dark-mode"));
+            Assert.Equal("not-run", result.Journal[^1].Execution);
+        });
+    }
+
+    [Fact]
+    public void CompilerRejectsAnUnverifiableOutcomeAndIrreversibleIntent()
+    {
+        WithVideo(video =>
+        {
+            var unchanged = new SemanticDemonstration(
+                "버튼을 눌러 줘", video, 1,
+                [new(0, .5, "MouseLeftClick")],
+                [Frame("before", .4, Element("Button", "확인", "ok")), Frame("after", .7, Element("Button", "확인", "ok"))],
+                [new("press", 0, .5, "click", Selector("Button", "확인", "ok"), null, "before", "after")]);
+            var unverifiable = Assert.Throws<InvalidOperationException>(() => SemanticWorkflowCompiler.Compile(unchanged));
+            Assert.Contains("구분할 근거", unverifiable.Message);
+
+            var destructive = unchanged with { NaturalLanguageIntent = "계정을 삭제해 줘" };
+            var blocked = Assert.Throws<InvalidOperationException>(() => SemanticWorkflowCompiler.Compile(destructive));
+            Assert.Contains("비가역", blocked.Message);
+        });
+    }
+
+    [Fact]
+    public void PixelOnlyOutcome_BecomesAVerifiableStateAndCanBeSkippedWhenAlreadyComplete()
+    {
+        WithVideo(video =>
+        {
+            var beforePixels = Enumerable.Repeat((byte)220, 16 * 16).ToArray();
+            var afterPixels = beforePixels.ToArray();
+            for (var y = 5; y < 11; y++)
+            for (var x = 5; x < 11; x++)
+                afterPixels[y * 16 + x] = 45;
+            var beforeSignature = new SemanticVisualSignature(1, 16, 16, Convert.ToBase64String(beforePixels));
+            var afterSignature = new SemanticVisualSignature(1, 16, 16, Convert.ToBase64String(afterPixels));
+            var target = Element("Button", "표시 전환", "toggle-display");
+            var before = Frame("pixel-before", .3, target) with { VisualSignature = beforeSignature };
+            var after = Frame("pixel-after", .8, target) with { VisualSignature = afterSignature };
+            var demonstration = new SemanticDemonstration(
+                "화면의 표시를 전환해 줘", video, 1.2,
+                [new(0, .5, "MouseLeftClick")],
+                [before, after],
+                [new("toggle-pixels", 0, .5, "click", Selector("Button", "표시 전환", "toggle-display"), null,
+                    "pixel-before", "pixel-after")]);
+
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var visual = Assert.Single(workflow.Steps[0].SuccessCondition.RequiredVisualStates!);
+            Assert.True(visual.TryDecodeMask(out var mask));
+            Assert.True(mask.Count(value => value != 0) >= 12);
+
+            var surface = new ExperienceSurface(demonstration.Frames, demonstration.Actions);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal(["toggle-pixels"], surface.ExecutedSteps);
+            Assert.Contains("visualStates", result.Journal[^1].Observation);
+
+            var completed = new ExperienceSurface(demonstration.Frames, demonstration.Actions, initialState: 1);
+            var skipped = new SemanticWorkflowRunner().Run(workflow, completed, verificationDelay: TimeSpan.Zero);
+            Assert.Equal("SUCCESS", skipped.Status);
+            Assert.Empty(completed.ExecutedSteps);
+
+            var unchanged = new ExperienceSurface(
+                demonstration.Frames, demonstration.Actions, advanceOnExecute: false);
+            var rejected = new SemanticWorkflowRunner().Run(
+                workflow, unchanged, verificationAttempts: 1, verificationDelay: TimeSpan.Zero);
+            Assert.Equal("VERIFICATION_FAILED", rejected.Status);
+            Assert.Contains("ExpectedAverageDifference", rejected.Journal[^1].Observation);
+        });
+    }
+
+    [Fact]
+    public void CompilerRejectsAFileThatIsNotAnMp4Recording()
+    {
+        var video = Path.GetTempFileName();
+        File.WriteAllBytes(video, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+        try
+        {
+            var demonstration = DarkModeDemonstration(video);
+            var error = Assert.Throws<InvalidOperationException>(() => SemanticWorkflowCompiler.Compile(demonstration));
+            Assert.Contains("MP4", error.Message);
+        }
+        finally { File.Delete(video); }
+    }
+
+    [Fact]
+    public void CompilerRejectsWorkflowWhenMostReferencedVideoFramesHaveNoPixelHash()
+    {
+        WithVideo(video =>
+        {
+            var demonstration = DarkModeDemonstration(video);
+            demonstration = demonstration with
+            {
+                Frames = demonstration.Frames.Select((frame, index) =>
+                    index == 0 ? frame : frame with { VideoFrameSha256 = null }).ToArray(),
+            };
+            var error = Assert.Throws<InvalidOperationException>(() => SemanticWorkflowCompiler.Compile(demonstration));
+            Assert.Contains("MP4 프레임 증거", error.Message);
+        });
+    }
+
+    [Fact]
+    public void SourceVideoIntegrity_IsCheckedAgainImmediatelyBeforeExecution()
+    {
+        WithVideo(video =>
+        {
+            var workflow = SemanticWorkflowCompiler.Compile(DarkModeDemonstration(video));
+            SemanticWorkflowIntegrityVerifier.VerifySourceVideo(workflow);
+
+            File.WriteAllBytes(video, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50, 1]);
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                SemanticWorkflowIntegrityVerifier.VerifySourceVideo(workflow));
+            Assert.Contains("SHA-256", error.Message);
+        });
+    }
+
+    [Fact]
+    public void RecordedClicks_AreExtractedDirectlyIntoAnEvidenceBoundWorkflow()
+    {
+        WithVideo(video =>
+        {
+            var firstFrame = Frame("recorded-before-1", .3,
+                Element("Button", "다음", "next"), Element("Text", "첫 화면", "state"));
+            var secondFrame = Frame("recorded-before-2", .8,
+                Element("Button", "확인", "confirm"), Element("Text", "확인 화면", "state"));
+            var finalFrame = Frame("recorded-final", 1.4,
+                Element("Text", "완료", "done"));
+            var recorded = new[]
+            {
+                RecordedClick(1, .5, firstFrame, Selector("Button", "다음", "next")),
+                RecordedClick(2, 1.0, secondFrame, Selector("Button", "확인", "confirm")),
+            };
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "두 화면을 진행해 완료 상태로 만들어 줘", video, 1.5, recorded, finalFrame);
+            var surface = new WorkflowFrameSurface([firstFrame, secondFrame, finalFrame]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("완료", surface.Current.Elements.Single(element => element.AutomationId == "done").Name);
+            Assert.Equal(2, workflow.Steps.Count);
+            Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
+            Assert.Equal(["recorded-1", "recorded-2"], surface.ExecutedSteps);
+        });
+    }
+
+    [Fact]
+    public void RecordedKoreanImeComposition_IsGroupedByFinalEditorValueInsteadOfRawKeys()
+    {
+        WithVideo(video =>
+        {
+            var start = Frame("start", .2, Element("Button", "새 메모", "new"));
+            var empty = Frame("key-empty", .6, Element("Edit", "메모 내용", "editor", ""));
+            var compositionValues = new[] { "ㅎ", "호", "회", "회ㅇ", "회으", "회의", "회의ㄹ", "회의로", "회의록", "회의록" };
+            var compositionFrames = compositionValues.Select((value, index) =>
+                Frame($"ime-{index + 1}", .72 + index * .12,
+                    Element("Edit", "메모 내용", "editor", value))).ToArray();
+            var final = Frame("final", 2.1,
+                Element("Edit", "메모 내용", "editor", "회의록"),
+                Element("Text", "한글 저장됨", "saved"));
+            var target = Selector("Edit", "메모 내용", "editor");
+            var keys = new[]
+            {
+                KeyCode.VcG, KeyCode.VcH, KeyCode.VcL, KeyCode.VcD, KeyCode.VcM,
+                KeyCode.VcL, KeyCode.VcF, KeyCode.VcH, KeyCode.VcR, KeyCode.VcEnter,
+            };
+            var keyEvents = keys.Select((key, index) => RecordedKey(
+                index + 2,
+                .65 + index * .12,
+                key,
+                index == 0 ? empty : compositionFrames[index - 1],
+                compositionFrames[index],
+                target));
+            var recorded = new[] { RecordedClick(1, .3, start, Selector("Button", "새 메모", "new")) }
+                .Concat(keyEvents)
+                .ToArray();
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "새 메모를 만들고 회의록을 입력해 줘", video, 2.4, recorded, final);
+            var surface = new WorkflowFrameSurface([start, empty, final]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("회의록", surface.Current.Elements.Single(element => element.AutomationId == "editor").Value);
+            Assert.Equal(["recorded-1", "recorded-2"], surface.ExecutedSteps);
+            Assert.Equal("type", workflow.Steps[1].Action.Kind);
+            Assert.Equal("회의록", workflow.Steps[1].Action.Value);
+            Assert.Equal(Enumerable.Range(1, 10), workflow.Steps[1].Evidence.EventIndices);
+            Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
+        });
+    }
+
+    [Fact]
+    public void RecordedWheelEvents_BecomeOneSemanticScrollWithAVisibleOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("List", "업무 목록", "work-list");
+            var before = Frame("scroll-start", .4,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=0"),
+                Element("Text", "목록 시작", "scroll-status"));
+            var middle = Frame("scroll-middle", .65,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=8"));
+            var after = Frame("scroll-end", .9,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=16"),
+                Element("Text", "아래 항목 표시됨", "scroll-status"));
+            var recorded = new[]
+            {
+                RecordedWheel(1, .5, -120, before, middle, target),
+                RecordedWheel(2, .75, -120, middle, after, target),
+            };
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "업무 목록을 내려 아래 항목을 보여 줘", video, 1.2, recorded, after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("scroll", step.Action.Kind);
+            Assert.Equal("vertical:increment:2", step.Action.Value);
+            Assert.Equal([0, 1], step.Evidence.EventIndices);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "아래 항목 표시됨");
+        });
+    }
+
+    [Fact]
+    public void ScrollWithOnlyAPercentageChange_IsRejectedAsUnverifiableUserOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("List", "업무 목록", "work-list");
+            var before = Frame("scroll-only-start", .4,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=0"));
+            var after = Frame("scroll-only-end", .9,
+                Element("List", "업무 목록", "work-list", "horizontal=-1;vertical=15"));
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "업무 목록을 아래로 내려 줘",
+                    video,
+                    1.2,
+                    [RecordedWheel(1, .5, -120, before, after, target)],
+                    after));
+
+            Assert.Contains("구분할 근거", error.Message);
+        });
+    }
+
+    [Fact]
+    public void RecordedSpaceOnACheckbox_BecomesASemanticToggleAndVerifiesTheUserResult()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("CheckBox", "어두운 모드", "dark-mode");
+            var before = Frame("keyboard-light", .3,
+                Element("CheckBox", "어두운 모드", "dark-mode", "Off"),
+                Element("Text", "밝은 모드 사용 중", "mode-status"));
+            var after = Frame("keyboard-dark", .6,
+                Element("CheckBox", "어두운 모드", "dark-mode", "On"),
+                Element("Text", "어두운 모드 사용 중", "mode-status"));
+            var recorded = RecordedKey(1, .45, KeyCode.VcSpace, before, after, target);
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "키보드로 어두운 모드를 켜 줘", video, 1, [recorded], after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("toggle", step.Action.Kind);
+            Assert.Equal([0], step.Evidence.EventIndices);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "어두운 모드 사용 중");
+        });
+    }
+
+    [Fact]
+    public void RecordedEnterOnAButton_BecomesASemanticClick()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Button", "다음", "next");
+            var before = Frame("enter-before", .3,
+                Element("Button", "다음", "next"),
+                Element("Text", "첫 화면", "status"));
+            var after = Frame("enter-after", .6,
+                Element("Text", "완료", "status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "키보드로 다음 화면을 열어 줘",
+                video,
+                1,
+                [RecordedKey(1, .45, KeyCode.VcEnter, before, after, target)],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("click", Assert.Single(workflow.Steps).Action.Kind);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "완료");
+        });
+    }
+
+    [Fact]
+    public void ModifiedKeyboardActivation_IsNotPromotedToAnUnattendedAction()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Button", "다음", "next");
+            var before = Frame("activation-before", .3, Element("Button", "다음", "next"));
+            var after = Frame("activation-after", .6, Element("Text", "완료", "done"));
+            var recorded = RecordedKey(1, .45, KeyCode.VcEnter, before, after, target);
+            recorded.ModifierKeyCodes = [KeyCode.VcLeftAlt];
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "다음 화면을 열어 줘", video, 1, [recorded], after));
+
+            Assert.Contains("Ctrl/Alt/Win", error.Message);
+        });
+    }
+
+    [Fact]
+    public void RecordedSliderDrag_BecomesASetRangeActionWithAVisibleUserOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Slider", "음량", "volume-slider");
+            var before = Frame("range-before", .3,
+                Element("Slider", "음량", "volume-slider", "20"),
+                Element("Text", "음량 20", "volume-status"));
+            var after = Frame("range-after", .8,
+                Element("Slider", "음량", "volume-slider", "75"),
+                Element("Text", "음량 75", "volume-status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "음량을 75로 높여 줘",
+                video,
+                1.2,
+                [RecordedDrag(1, .5, before, after, target)],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("set-range", step.Action.Kind);
+            Assert.Equal("75", step.Action.Value);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "음량 75");
+        });
+    }
+
+    [Fact]
+    public void RecordedListDrag_BecomesAReorderByFinalSemanticOrdinal()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("ListItem", "업무 B", "");
+            var before = Frame("order-before", .3,
+                Element("List", "우선순위 목록", "priority-list"),
+                Element("ListItem", "업무 A", "", "ordinal=0"),
+                Element("ListItem", "업무 B", "", "ordinal=1"),
+                Element("ListItem", "업무 C", "", "ordinal=2"),
+                Element("ListItem", "업무 D", "", "ordinal=3"),
+                Element("Text", "순서: A,B,C,D", "priority-status"));
+            var after = Frame("order-after", .9,
+                Element("List", "우선순위 목록", "priority-list"),
+                Element("ListItem", "업무 A", "", "ordinal=0"),
+                Element("ListItem", "업무 C", "", "ordinal=1"),
+                Element("ListItem", "업무 D", "", "ordinal=2"),
+                Element("ListItem", "업무 B", "", "ordinal=3"),
+                Element("Text", "순서: A,C,D,B", "priority-status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "업무 B를 목록 마지막으로 이동해 줘",
+                video,
+                1.2,
+                [RecordedDrag(1, .5, before, after, target)],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("reorder-item", step.Action.Kind);
+            Assert.Equal("3", step.Action.Value);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "업무 B" && selector.ExpectedValue == "ordinal=3");
+            Assert.Contains(surface.Current.Elements, element => element.Name == "순서: A,C,D,B");
+        });
+    }
+
+    [Fact]
+    public void RecordedSurfaceDrag_BecomesARelativeGestureWithSemanticOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Pane", "도형 작업 영역", "shape-canvas");
+            var bounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("canvas-before", .3,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "canvas-status"));
+            var after = Frame("canvas-after", .8,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "canvas-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 180;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 400;
+            recorded.EndScreenY = 200;
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "도형을 작업 영역 오른쪽으로 이동해 줘",
+                video,
+                1.2,
+                [recorded],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("drag-within", step.Action.Kind);
+            Assert.Equal("0.2,0.5,0.75,0.5", step.Action.Value);
+            Assert.DoesNotContain("100", step.Action.Value);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "도형 위치: 오른쪽");
+        });
+    }
+
+    [Fact]
+    public void CanvasDragWithoutASemanticOutcome_IsRejected()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Pane", "그리기 영역", "canvas");
+            var bounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("canvas-before", .3, Element("Pane", "그리기 영역", "canvas", bounds: bounds));
+            var after = Frame("canvas-after", .8, Element("Pane", "그리기 영역", "canvas", bounds: bounds));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 180;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 400;
+            recorded.EndScreenY = 200;
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "선을 그어 줘",
+                    video,
+                    1.2,
+                    [recorded],
+                    after));
+
+            Assert.Contains("구분할 근거", error.Message);
+        });
+    }
+
+    [Fact]
+    public void SurfaceDragLeavingTheObservedTarget_IsRejectedBeforeExecution()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Pane", "도형 작업 영역", "shape-canvas");
+            var bounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("surface-before", .3,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "canvas-status"));
+            var after = Frame("surface-after", .8,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "canvas-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 180;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 540;
+            recorded.EndScreenY = 200;
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "도형을 작업 영역 밖으로 이동해 줘", video, 1.2, [recorded], after));
+
+            Assert.Contains("정규화할 수 없습니다", error.Message);
+        });
+    }
+
+    [Fact]
+    public void RecordedVisionDrag_UsesAPixelAnchorAndRelativeWindowEndpoint()
+    {
+        WithVideo(video =>
+        {
+            var samples = Enumerable.Range(0, 169).Select(index => (byte)(index % 251)).ToArray();
+            var anchor = new SemanticVisualAnchor(1, 13, 80, Convert.ToBase64String(samples), 10, 30);
+            var target = new SemanticTargetSelector(
+                ["Window"], "그리기 앱", VisualAnchor: anchor);
+            var bounds = new SemanticBounds(100, 100, 700, 500);
+            var before = Frame("vision-before", .3,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "vision-status"));
+            var after = Frame("vision-after", .8,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "vision-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 220;
+            recorded.ScreenY = 300;
+            recorded.EndScreenX = 550;
+            recorded.EndScreenY = 300;
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "영상에서 본 파란 도형을 오른쪽으로 이동해 줘",
+                video,
+                1.2,
+                [recorded],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("visual-drag", step.Action.Kind);
+            Assert.Equal("0.75,0.5", step.Action.Value);
+            Assert.Equal(anchor, step.Action.Target!.VisualAnchor);
+            Assert.DoesNotContain("220", step.Action.Value);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "도형 위치: 오른쪽");
+        });
+    }
+
+    [Fact]
+    public void RecordedVisionClick_IsNotDowngradedToAWindowCenterClick()
+    {
+        WithVideo(video =>
+        {
+            var samples = Enumerable.Range(0, 169).Select(index => (byte)(index % 251)).ToArray();
+            var anchor = new SemanticVisualAnchor(1, 13, 80, Convert.ToBase64String(samples), 10, 30);
+            var target = new SemanticTargetSelector(["Window"], "그리기 앱", VisualAnchor: anchor);
+            var bounds = new SemanticBounds(100, 100, 700, 500);
+            var before = Frame("vision-click-before", .3,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "실행 대기", "vision-click-status"));
+            var after = Frame("vision-click-after", .8,
+                Element("Window", "그리기 앱", "", bounds: bounds),
+                Element("Text", "실행됨", "vision-click-status"));
+            var recorded = RecordedClick(1, .5, before, target);
+            recorded.ScreenX = 220;
+            recorded.ScreenY = 300;
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "영상에서 본 파란 버튼을 눌러 줘", video, 1.2, [recorded], after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("visual-click", step.Action.Kind);
+            Assert.Equal(anchor, step.Action.Target!.VisualAnchor);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "실행됨");
+        });
+    }
+
+    [Fact]
+    public void VisualAnchorMatcher_RequiresOnePixelCandidateCluster()
+    {
+        const int width = 420;
+        const int height = 240;
+        var pixels = Enumerable.Repeat((byte)220, width * height * 4).ToArray();
+        PaintRectangle(pixels, width, 65, 95, 50, 50, blue: 180, green: 110, red: 40);
+        var anchor = WindowsVisualAnchor.CreateAnchorFromPixels(pixels, width, height, 90, 120);
+
+        var unique = WindowsVisualAnchor.FindUnique(pixels, width, height, 10, 20, anchor);
+
+        Assert.Equal(1, unique.CandidateCount);
+        Assert.InRange(unique.ScreenX, 10 + 90 - anchor.ClusterRadius, 10 + 90 + anchor.ClusterRadius);
+        Assert.InRange(unique.ScreenY, 20 + 120 - anchor.ClusterRadius, 20 + 120 + anchor.ClusterRadius);
+
+        PaintRectangle(pixels, width, 285, 95, 50, 50, blue: 180, green: 110, red: 40);
+        var ambiguous = WindowsVisualAnchor.FindUnique(pixels, width, height, 0, 0, anchor);
+
+        Assert.True(ambiguous.CandidateCount >= 2);
+    }
+
+    [Fact]
+    public void RecordedArrowNavigation_BecomesASelectionByFinalOptionName()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("ComboBox", "색상", "color-selector");
+            var before = Frame("select-red", .3,
+                Element("ComboBox", "색상", "color-selector", "빨강"),
+                Element("Text", "선택: 빨강", "color-status"));
+            var middle = Frame("select-green", .55,
+                Element("ComboBox", "색상", "color-selector", "초록"));
+            var after = Frame("select-blue", .8,
+                Element("ComboBox", "색상", "color-selector", "파랑"),
+                Element("Text", "선택: 파랑", "color-status"));
+            var recorded = new[]
+            {
+                RecordedKey(1, .45, KeyCode.VcDown, before, middle, target),
+                RecordedKey(2, .7, KeyCode.VcDown, middle, after, target),
+            };
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "색상을 파랑으로 선택해 줘", video, 1.2, recorded, after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("select-option", step.Action.Kind);
+            Assert.Equal("파랑", step.Action.Value);
+            Assert.Equal([0, 1], step.Evidence.EventIndices);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "선택: 파랑");
+        });
+    }
+
+    [Fact]
+    public void RecordedTabTraversal_BecomesFocusOnTheFinalSemanticTarget()
+    {
+        WithVideo(video =>
+        {
+            var name = Selector("Edit", "이름", "focus-name");
+            var email = Selector("Edit", "이메일", "focus-email");
+            var before = Frame("focus-name", .3,
+                Element("Edit", "이름", "focus-name", focused: true),
+                Element("Edit", "이메일", "focus-email"),
+                Element("Button", "검색", "focus-search"),
+                Element("Text", "포커스: 이름", "focus-status"));
+            var middle = Frame("focus-email", .55,
+                Element("Edit", "이름", "focus-name"),
+                Element("Edit", "이메일", "focus-email", focused: true),
+                Element("Button", "검색", "focus-search"),
+                Element("Text", "포커스: 이메일", "focus-status"));
+            var after = Frame("focus-search", .8,
+                Element("Edit", "이름", "focus-name"),
+                Element("Edit", "이메일", "focus-email"),
+                Element("Button", "검색", "focus-search", focused: true),
+                Element("Text", "포커스: 검색", "focus-status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "Tab으로 검색 버튼까지 이동해 줘",
+                video,
+                1.2,
+                [
+                    RecordedKey(1, .45, KeyCode.VcTab, before, middle, name),
+                    RecordedKey(2, .7, KeyCode.VcTab, middle, after, email),
+                ],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("focus", step.Action.Kind);
+            Assert.Equal("focus-search", step.Action.Target!.AutomationId);
+            Assert.Equal([0, 1], step.Evidence.EventIndices);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.AutomationId == "focus-search" && selector.RequireKeyboardFocus);
+            Assert.Contains(surface.Current.Elements,
+                element => element.AutomationId == "focus-search" && element.KeyboardFocused);
+        });
+    }
+
+    [Fact]
+    public void TabTraversalWithMultipleFocusedCandidates_IsRejectedBeforeExecution()
+    {
+        WithVideo(video =>
+        {
+            var before = Frame("focus-before", .3,
+                Element("Edit", "이름", "focus-name", focused: true),
+                Element("Button", "검색", "focus-search"));
+            var ambiguous = Frame("focus-ambiguous", .7,
+                Element("Button", "검색", "focus-search", focused: true),
+                Element("Button", "도움말", "focus-help", focused: true));
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "Tab으로 검색 버튼까지 이동해 줘",
+                    video,
+                    1,
+                    [RecordedKey(1, .5, KeyCode.VcTab, before, ambiguous,
+                        Selector("Edit", "이름", "focus-name"))],
+                    ambiguous));
+
+            Assert.Contains("키보드 포커스 대상을 정확히 하나", error.Message);
+        });
+    }
+
+    [Fact]
+    public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
+    {
+        WithVideo(video =>
+        {
+            var before = Frame("before", .3, Element("Edit", "비밀번호", "password", ""));
+            var after = Frame("after", .5, Element("Edit", "비밀번호", "password", "x"));
+            var sensitive = RecordedKey(1, .4, KeyCode.VcX, before, after, Selector("Edit", "비밀번호", "password"));
+            var final = Frame("final", .8, Element("Edit", "비밀번호", "password", "x"));
+            var error = Assert.Throws<InvalidOperationException>(() => RecordedSemanticWorkflowExtractor.Compile(
+                "암호를 입력해 줘", video, 1, [sensitive], final));
+            Assert.Contains("민감 입력", error.Message);
+
+            var ordinaryBefore = Frame("ordinary-before", .3, Element("Edit", "검색", "search", ""));
+            var ordinaryAfter = Frame("ordinary-after", .5, Element("Edit", "검색", "search", "v"));
+            var modified = RecordedKey(2, .4, KeyCode.VcV, ordinaryBefore, ordinaryAfter, Selector("Edit", "검색", "search"));
+            modified.ModifierKeyCodes = [KeyCode.VcLeftControl];
+            var modifiedError = Assert.Throws<InvalidOperationException>(() => RecordedSemanticWorkflowExtractor.Compile(
+                "검색어를 입력해 줘", video, 1, [modified], ordinaryAfter));
+            Assert.Contains("Ctrl/Alt/Win", modifiedError.Message);
+        });
+    }
+
+    [Fact]
+    public async Task SemanticRecordingEvidence_SurvivesProjectSaveAndReload()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"series4-semantic-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        var video = Path.Combine(directory, "recording.mp4");
+        var sidecar = Path.Combine(directory, "recording.series4.json");
+        File.WriteAllBytes(video, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+        var anchor = new SemanticVisualAnchor(
+            1, 13, 80, Convert.ToBase64String(Enumerable.Range(0, 169).Select(index => (byte)index).ToArray()), 10, 30);
+        var frame = Frame("before", .4,
+            Element("Button", "다음", "next", bounds: new SemanticBounds(10, 20, 110, 60)));
+        var recorded = RecordedClick(1, .5, frame,
+            new SemanticTargetSelector(["Button"], "다음", "next", VisualAnchor: anchor));
+        try
+        {
+            await MacroProjectStore.SaveToPathAsync(sidecar, video, [recorded]);
+            var loaded = await MacroProjectStore.ReadAsync(sidecar);
+
+            var restored = Assert.Single(loaded.RecordedEvents);
+            Assert.Equal("before", restored.SemanticBefore?.Id);
+            Assert.Equal("next", restored.SemanticTarget?.AutomationId);
+            Assert.Equal("다음", restored.SemanticTarget?.Name);
+            Assert.Equal(anchor, restored.SemanticTarget?.VisualAnchor);
+            Assert.Equal(new SemanticBounds(10, 20, 110, 60), restored.SemanticBefore?.Elements[0].Bounds);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static SemanticDemonstration DarkModeDemonstration(string video) => new(
+        "설정에서 어두운 모드를 켜 줘",
+        video,
+        1.5,
+        [new(0, .6, "MouseLeftClick")],
+        [
+            Frame("light", .4,
+                Element("Button", "어두운 모드", "dark-mode", "끔"),
+                Element("Text", "화면 설정", "heading")),
+            Frame("dark", .9,
+                Element("Button", "어두운 모드", "dark-mode", "켬"),
+                Element("Text", "어두운 모드 사용 중", "status")),
+        ],
+        [new("enable-dark-mode", 0, .6, "toggle", Selector("Button", "어두운 모드", "dark-mode"), null, "light", "dark")]);
+
+    private static SemanticDemonstrationFrame Frame(string id, double offset, params SemanticElementEvidence[] elements) =>
+        new(id, offset, "SampleApp", "업무 앱", string.Empty, elements, FrameHash(id));
+
+    private static string FrameHash(string id) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).ToLowerInvariant();
+
+    private static SemanticElementEvidence Element(
+        string role,
+        string name,
+        string automationId,
+        string value = "",
+        bool focused = false,
+        SemanticBounds? bounds = null) =>
+        new(role, name, automationId, value, KeyboardFocused: focused, Bounds: bounds);
+
+    private static SemanticTargetSelector Selector(string role, string name, string automationId) =>
+        new([role], name, automationId);
+
+    private static RecordedEvent RecordedClick(
+        long sequence,
+        double offset,
+        SemanticDemonstrationFrame before,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "왼쪽 클릭",
+            ActionKind = MacroActionKind.MouseLeftClick,
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticTarget = target,
+        };
+
+    private static RecordedEvent RecordedKey(
+        long sequence,
+        double offset,
+        KeyCode key,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "키보드",
+            Message = $"키 입력 · {key}",
+            ActionKind = MacroActionKind.KeyStroke,
+            KeyCodes = [key],
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static RecordedEvent RecordedWheel(
+        long sequence,
+        double offset,
+        int rotation,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "휠 아래로",
+            ActionKind = MacroActionKind.MouseWheel,
+            WheelRotation = rotation,
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static RecordedEvent RecordedDrag(
+        long sequence,
+        double offset,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "왼쪽 드래그",
+            ActionKind = MacroActionKind.MouseDrag,
+            DragButton = MouseButton.Button1,
+            DragDuration = TimeSpan.FromMilliseconds(400),
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static void PaintRectangle(
+        byte[] pixels,
+        int width,
+        int left,
+        int top,
+        int rectangleWidth,
+        int rectangleHeight,
+        byte blue,
+        byte green,
+        byte red)
+    {
+        for (var y = top; y < top + rectangleHeight; y++)
+        {
+            for (var x = left; x < left + rectangleWidth; x++)
+            {
+                var offset = (y * width + x) * 4;
+                pixels[offset] = blue;
+                pixels[offset + 1] = green;
+                pixels[offset + 2] = red;
+                pixels[offset + 3] = 255;
+            }
+        }
+    }
+
+    private static void WithVideo(Action<string> action)
+    {
+        var video = Path.GetTempFileName();
+        File.WriteAllBytes(video, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
+        try { action(video); }
+        finally { File.Delete(video); }
+    }
+
+    private sealed class ExperienceSurface : ISemanticWorkflowSurface, ISemanticVisualWorkflowSurface
+    {
+        private readonly IReadOnlyList<SemanticDemonstrationFrame> frames;
+        private readonly IReadOnlyList<SemanticDemonstrationAction> actions;
+        private readonly bool reverseElements;
+        private readonly bool duplicateTarget;
+        private readonly bool advanceOnExecute;
+        private int state;
+        private long revision;
+        private IReadOnlyList<SemanticVisualStateRequirement> visualRequirements = [];
+
+        internal ExperienceSurface(
+            IReadOnlyList<SemanticDemonstrationFrame> frames,
+            IReadOnlyList<SemanticDemonstrationAction> actions,
+            bool reverseElements = false,
+            int initialState = 0,
+            bool duplicateTarget = false,
+            bool advanceOnExecute = true)
+        {
+            this.frames = frames;
+            this.actions = actions;
+            this.reverseElements = reverseElements;
+            this.duplicateTarget = duplicateTarget;
+            this.advanceOnExecute = advanceOnExecute;
+            state = initialState;
+        }
+
+        internal List<string> ExecutedSteps { get; } = [];
+        internal int WrongTargetExecutions { get; private set; }
+        internal SemanticWorkflowObservation Current => Observe();
+        internal string Value(string automationId) => Current.Elements.First(element => element.AutomationId == automationId).Value;
+
+        public SemanticWorkflowObservation Observe()
+        {
+            var frame = frames[state];
+            var elements = frame.Elements.Select((element, index) => new SemanticWorkflowElement(
+                $"{element.AutomationId}-{index}", element.Role, element.Name, element.AutomationId,
+                element.Value, element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToList();
+            if (duplicateTarget && state == 0)
+            {
+                var original = elements.Single(element => element.AutomationId == actions[0].Target!.AutomationId);
+                elements.Add(original with { Id = original.Id + "-duplicate" });
+            }
+            if (reverseElements) elements.Reverse();
+            var visualStates = visualRequirements.ToDictionary(
+                requirement => requirement.Id,
+                requirement => SemanticWorkflowCompiler.EvaluateVisualState(frame.VisualSignature, requirement),
+                StringComparer.Ordinal);
+            return new SemanticWorkflowObservation(
+                frame.ProcessName, frame.WindowTitle, frame.Url, elements, revision, visualStates);
+        }
+
+        public void ConfigureVisualStates(IReadOnlyList<SemanticVisualStateRequirement> requirements) =>
+            visualRequirements = requirements;
+
+        public void Execute(SemanticPlannedAction action, SemanticWorkflowObservation observation)
+        {
+            var expected = actions[state];
+            var current = Observe();
+            var candidate = current.Elements.SingleOrDefault(element => element.Id == action.TargetId);
+            if (observation.Revision != revision
+                || action.StepId != expected.Id
+                || candidate is null
+                || candidate.AutomationId != expected.Target!.AutomationId)
+            {
+                WrongTargetExecutions++;
+                throw new InvalidOperationException("wrong or stale target");
+            }
+            ExecutedSteps.Add(action.StepId);
+            if (advanceOnExecute) state++;
+            revision++;
+        }
+    }
+
+    private sealed class WorkflowFrameSurface(IReadOnlyList<SemanticDemonstrationFrame> frames) : ISemanticWorkflowSurface
+    {
+        private int state;
+        private long revision;
+        internal List<string> ExecutedSteps { get; } = [];
+        internal SemanticWorkflowObservation Current => Observe();
+
+        public SemanticWorkflowObservation Observe()
+        {
+            var frame = frames[state];
+            return new SemanticWorkflowObservation(
+                frame.ProcessName,
+                frame.WindowTitle,
+                frame.Url,
+                frame.Elements.Select((element, index) => new SemanticWorkflowElement(
+                    $"{element.AutomationId}-{index}", element.Role, element.Name, element.AutomationId,
+                    element.Value, element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToArray(),
+                revision);
+        }
+
+        public void Execute(SemanticPlannedAction action, SemanticWorkflowObservation observation)
+        {
+            Assert.Equal(revision, observation.Revision);
+            Assert.Contains(observation.Elements, element => element.Id == action.TargetId);
+            ExecutedSteps.Add(action.StepId);
+            state++;
+            revision++;
+        }
+    }
+}

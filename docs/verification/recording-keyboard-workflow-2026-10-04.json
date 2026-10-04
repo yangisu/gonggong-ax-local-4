@@ -1,0 +1,22 @@
+{
+  "executedAt": "2026-10-04T13:50:41.8174492+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook Space key event + automatic UI Automation evidence",
+  "intent": "키보드로 어두운 모드를 켜 줘",
+  "recordedEventCount": 2,
+  "meaningfulKeyEventCount": 1,
+  "workflowStepCount": 1,
+  "workflowAction": "toggle",
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 4,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "f3a66cff077d10c9bf7211cba4c70e4b7a367310cf1c558dd78a8aaba5c283bb",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "toggleValue": "On",
+    "status": "어두운 모드 사용 중"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-keyboard-workflow (local, ignored by git)"
+}
