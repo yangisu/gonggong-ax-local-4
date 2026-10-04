@@ -1,0 +1,29 @@
+{
+  "executedAt": "2026-10-04",
+  "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
+  "testSuite": "SemanticWorkflowWindowsIntegrationTests",
+  "total": 2,
+  "passed": 2,
+  "failed": 0,
+  "scenarios": [
+    {
+      "intent": "새 메모를 만들고 회의록이라고 입력해 줘",
+      "workflowSource": "semantic demonstration with synchronized click and text events",
+      "visibleUserOutcome": {
+        "editorValue": "회의록",
+        "status": "저장됨"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "설정에서 어두운 모드를 켜 줘",
+      "workflowSource": "independent semantic demonstration with a synchronized toggle event",
+      "visibleUserOutcome": {
+        "toggleValue": "On",
+        "status": "어두운 모드 사용 중"
+      },
+      "result": "PASS"
+    }
+  ],
+  "rawArtifact": "artifacts/semantic-workflow-windows/semantic-workflow-windows.trx (local, ignored by git)"
+}

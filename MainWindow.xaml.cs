@@ -820,6 +820,23 @@ public partial class MainWindow : Window
             return;
         }
 
+        SemanticDemonstrationFrame? semanticBefore = null;
+        SemanticTargetSelector? semanticTarget = null;
+        try
+        {
+            var semantic = WindowsSemanticWorkflowSurface.CapturePointDemonstrationFrame(
+                $"session-{recordingSessionId}-event-{recordingClock.ElapsedTicks}",
+                recordingClock.Elapsed.TotalSeconds,
+                e.Data.X,
+                e.Data.Y);
+            semanticBefore = semantic.Frame;
+            semanticTarget = semantic.Target;
+        }
+        catch
+        {
+            // Raw recording remains available; semantic compilation will reject missing evidence.
+        }
+
         lock (pendingMouseGate)
         {
             pendingMousePresses[e.Data.Button] = new PendingMousePress(
@@ -829,7 +846,9 @@ public partial class MainWindow : Window
                 actionKind,
                 e.Data.X,
                 e.Data.Y,
-                GetPressedModifierCodes()
+                GetPressedModifierCodes(),
+                semanticBefore,
+                semanticTarget
             );
         }
     }
@@ -921,7 +940,9 @@ public partial class MainWindow : Window
             endScreenY: isDrag ? e.Data.Y : null,
             dragButton: isDrag ? pending.Button : null,
             dragDuration: isDrag ? dragDuration : null,
-            mousePath: mousePath
+            mousePath: mousePath,
+            semanticBefore: pending.SemanticBefore,
+            semanticTarget: pending.SemanticTarget
         );
     }
 
@@ -1177,7 +1198,9 @@ public partial class MainWindow : Window
         double? endScreenY = null,
         MouseButton? dragButton = null,
         TimeSpan? dragDuration = null,
-        MousePathPoint[]? mousePath = null
+        MousePathPoint[]? mousePath = null,
+        SemanticDemonstrationFrame? semanticBefore = null,
+        SemanticTargetSelector? semanticTarget = null
     )
     {
         var queue = hookEventQueue;
@@ -1213,7 +1236,9 @@ public partial class MainWindow : Window
                 endScreenY,
                 dragButton,
                 dragDuration,
-                mousePath?.ToArray() ?? []
+                mousePath?.ToArray() ?? [],
+                semanticBefore,
+                semanticTarget
             )
         );
         if (enqueued)
@@ -1271,7 +1296,9 @@ public partial class MainWindow : Window
             snapshot.EndScreenY,
             snapshot.DragButton,
             snapshot.DragDuration,
-            snapshot.MousePath
+            snapshot.MousePath,
+            snapshot.SemanticBefore,
+            snapshot.SemanticTarget
         );
         captureDiagnostics.RecordCommitted();
     }
@@ -1300,7 +1327,9 @@ public partial class MainWindow : Window
         double? endScreenY = null,
         MouseButton? dragButton = null,
         TimeSpan? dragDuration = null,
-        MousePathPoint[]? mousePath = null
+        MousePathPoint[]? mousePath = null,
+        SemanticDemonstrationFrame? semanticBefore = null,
+        SemanticTargetSelector? semanticTarget = null
     )
     {
         var recordedEvent = new RecordedEvent
@@ -1330,6 +1359,8 @@ public partial class MainWindow : Window
             CaptureTop = eventCaptureTop ?? captureTop,
             CaptureWidth = eventCaptureWidth ?? captureWidth,
             CaptureHeight = eventCaptureHeight ?? captureHeight,
+            SemanticBefore = semanticBefore,
+            SemanticTarget = semanticTarget,
         };
 
         ApplyEventPolicy(recordedEvent);
@@ -4482,7 +4513,9 @@ public partial class MainWindow : Window
         double? EndScreenY,
         MouseButton? DragButton,
         TimeSpan? DragDuration,
-        MousePathPoint[] MousePath
+        MousePathPoint[] MousePath,
+        SemanticDemonstrationFrame? SemanticBefore,
+        SemanticTargetSelector? SemanticTarget
     );
 
     [StructLayout(LayoutKind.Sequential)]
@@ -4508,7 +4541,9 @@ public partial class MainWindow : Window
         MacroActionKind actionKind,
         int startX,
         int startY,
-        KeyCode[] modifierKeyCodes
+        KeyCode[] modifierKeyCodes,
+        SemanticDemonstrationFrame? semanticBefore,
+        SemanticTargetSelector? semanticTarget
     )
     {
         private readonly List<MousePathPoint> path =
@@ -4529,6 +4564,10 @@ public partial class MainWindow : Window
         public int StartY { get; } = startY;
 
         public KeyCode[] ModifierKeyCodes { get; } = modifierKeyCodes;
+
+        public SemanticDemonstrationFrame? SemanticBefore { get; } = semanticBefore;
+
+        public SemanticTargetSelector? SemanticTarget { get; } = semanticTarget;
 
         public bool WasDragged { get; private set; }
 

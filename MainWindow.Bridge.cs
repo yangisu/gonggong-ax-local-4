@@ -110,6 +110,77 @@ public partial class MainWindow
         if (action == "focus_semantic_window") return SemanticUiBridge.Focus(command);
         if (action == "capture_semantic_screen") return SemanticUiBridge.Capture(command);
         if (action == "execute_semantic") return SemanticUiBridge.Execute(command);
+        if (action == "compile_semantic_workflow")
+        {
+            if (BridgeBusy) throw new InvalidOperationException("진행 중인 작업을 먼저 중지하세요.");
+            var demonstrationPath = Path.GetFullPath(command.GetProperty("demonstration_path").GetString()
+                ?? throw new ArgumentException("demonstration_path가 필요합니다."));
+            var demonstration = JsonSerializer.Deserialize<SemanticDemonstration>(
+                await File.ReadAllTextAsync(demonstrationPath), SemanticWorkflowJson.Options)
+                ?? throw new InvalidDataException("시연 의미 파일이 비어 있습니다.");
+            if (!Path.IsPathRooted(demonstration.VideoPath))
+                demonstration = demonstration with
+                {
+                    VideoPath = Path.GetFullPath(Path.Combine(
+                        Path.GetDirectoryName(demonstrationPath) ?? Environment.CurrentDirectory,
+                        demonstration.VideoPath)),
+                };
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var workflowPath = command.TryGetProperty("workflow_path", out var workflowValue)
+                ? Path.GetFullPath(workflowValue.GetString() ?? throw new ArgumentException("workflow_path가 비어 있습니다."))
+                : demonstrationPath + ".workflow.json";
+            var workflowDirectory = Path.GetDirectoryName(workflowPath)
+                ?? throw new InvalidOperationException("Workflow 저장 폴더를 확인할 수 없습니다.");
+            Directory.CreateDirectory(workflowDirectory);
+            await File.WriteAllTextAsync(workflowPath, workflow.ToJson(), new UTF8Encoding(false));
+            return new
+            {
+                workflowPath,
+                workflow.SourceVideoSha256,
+                workflow.NaturalLanguageIntent,
+                stepCount = workflow.Steps.Count,
+                evidenceCoverage = workflow.EvidenceCoverage.Coverage,
+            };
+        }
+        if (action == "compile_current_semantic_workflow")
+        {
+            if (BridgeBusy) throw new InvalidOperationException("녹화를 중지한 뒤 Workflow를 만드세요.");
+            if (currentVideoPath is null || !File.Exists(currentVideoPath))
+                throw new InvalidOperationException("현재 녹화 영상이 없습니다.");
+            if (!RecordedVideo.NaturalDuration.HasTimeSpan)
+                throw new InvalidOperationException("현재 녹화 영상 길이를 확인할 수 없습니다.");
+            var intent = command.GetProperty("intent").GetString()
+                ?? throw new ArgumentException("intent가 필요합니다.");
+            var duration = RecordedVideo.NaturalDuration.TimeSpan.TotalSeconds;
+            var final = WindowsSemanticWorkflowSurface.CaptureDemonstrationFrame(
+                $"final-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}", duration).Frame;
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                intent, currentVideoPath, duration, RecordedEvents.ToArray(), final);
+            var workflowPath = command.TryGetProperty("workflow_path", out var currentWorkflowValue)
+                ? Path.GetFullPath(currentWorkflowValue.GetString() ?? throw new ArgumentException("workflow_path가 비어 있습니다."))
+                : currentVideoPath + ".workflow.json";
+            var workflowDirectory = Path.GetDirectoryName(workflowPath)
+                ?? throw new InvalidOperationException("Workflow 저장 폴더를 확인할 수 없습니다.");
+            Directory.CreateDirectory(workflowDirectory);
+            await File.WriteAllTextAsync(workflowPath, workflow.ToJson(), new UTF8Encoding(false));
+            return new
+            {
+                workflowPath,
+                workflow.SourceVideoSha256,
+                workflow.NaturalLanguageIntent,
+                stepCount = workflow.Steps.Count,
+                evidenceCoverage = workflow.EvidenceCoverage.Coverage,
+                source = "current-recording",
+            };
+        }
+        if (action == "run_semantic_workflow")
+        {
+            if (BridgeBusy) throw new InvalidOperationException("진행 중인 작업을 먼저 중지하세요.");
+            var workflowPath = Path.GetFullPath(command.GetProperty("workflow_path").GetString()
+                ?? throw new ArgumentException("workflow_path가 필요합니다."));
+            var workflow = SemanticWorkflowDefinition.FromJson(await File.ReadAllTextAsync(workflowPath));
+            return new SemanticWorkflowRunner().Run(workflow: workflow, surface: new WindowsSemanticWorkflowSurface());
+        }
         if (action == "run_google_sheets_golden_path")
         {
             IReadOnlyList<int>? appliedBounds = null;
