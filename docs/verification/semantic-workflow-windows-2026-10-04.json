@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 3,
-  "passed": 3,
+  "total": 4,
+  "passed": 4,
   "failed": 0,
   "scenarios": [
     {
@@ -29,6 +29,15 @@
       "workflowSource": "semantic demonstration with synchronized wheel and before/after screen evidence",
       "visibleUserOutcome": {
         "status": "아래 항목 표시됨"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "키보드로 어두운 모드를 켜 줘",
+      "workflowSource": "semantic demonstration with a synchronized Space key and focused checkbox evidence",
+      "visibleUserOutcome": {
+        "toggleValue": "On",
+        "status": "어두운 모드 사용 중"
       },
       "result": "PASS"
     }

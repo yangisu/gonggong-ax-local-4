@@ -1,5 +1,5 @@
 {
-  "executedAt": "2026-10-04T13:41:10.7351156+09:00",
+  "executedAt": "2026-10-04T13:53:17.1186329+09:00",
   "environment": "Interactive Windows desktop, .NET 10 WPF",
   "source": "actual ScreenRecorderLib MP4 + SharpHook input events + automatic UI Automation evidence",
   "intent": "새 메모를 만들고 meeting을 입력해 줘",
@@ -10,7 +10,7 @@
   "videoEvidenceCoverage": 1.0,
   "videoEvidenceFrameCount": 16,
   "sourceVideoIntegrityCheckedBeforeRun": true,
-  "sourceVideoSha256": "5e7dff26c179396776e756f7cd075435bed58ba8e5664e7ac3c3ea0420d80a4e",
+  "sourceVideoSha256": "96750ffece2d3bf2769bd5f72d0bb735a5c02f7cac9ee118f2a39f58d39c8a99",
   "runStatus": "SUCCESS",
   "visibleUserOutcome": {
     "editorValue": "meeting",

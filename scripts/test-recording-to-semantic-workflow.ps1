@@ -2,7 +2,7 @@ param(
     [string]$OutputDirectory = "artifacts/recording-to-semantic-workflow",
     [string]$EnginePath = "",
     [string]$FixturePath = "",
-    [ValidateSet("text", "scroll")]
+    [ValidateSet("text", "scroll", "keyboard")]
     [string]$Scenario = "text"
 )
 
@@ -66,13 +66,21 @@ $demonstration = $null
 $replay = $null
 try {
     [void](Invoke-BridgeCommand @{ action = "record" } 40)
-    $demonstrationMode = if ($Scenario -eq "scroll") { "scroll-demo" } else { "editor-demo" }
-    $intent = if ($Scenario -eq "scroll") {
-        "업무 목록을 내려 아래 항목을 보여 줘"
-    } else {
-        "새 메모를 만들고 meeting을 입력해 줘"
+    $demonstrationMode = switch ($Scenario) {
+        "scroll" { "scroll-demo" }
+        "keyboard" { "keyboard-demo" }
+        default { "editor-demo" }
     }
-    $expectedAction = if ($Scenario -eq "scroll") { "scroll" } else { "type" }
+    $intent = switch ($Scenario) {
+        "scroll" { "업무 목록을 내려 아래 항목을 보여 줘" }
+        "keyboard" { "키보드로 어두운 모드를 켜 줘" }
+        default { "새 메모를 만들고 meeting을 입력해 줘" }
+    }
+    $expectedAction = switch ($Scenario) {
+        "scroll" { "scroll" }
+        "keyboard" { "toggle" }
+        default { "type" }
+    }
     $demonstration = Start-Process -FilePath $FixturePath -ArgumentList $demonstrationMode -PassThru
     Start-Sleep -Seconds 9
     [void](Invoke-BridgeCommand @{ action = "stop_recording" } 30)
@@ -102,7 +110,11 @@ try {
         $demonstration.CloseMainWindow() | Out-Null
         if (-not $demonstration.WaitForExit(3000)) { $demonstration.Kill($true) }
     }
-    $replayMode = if ($Scenario -eq "scroll") { "scroll" } else { "editor" }
+    $replayMode = switch ($Scenario) {
+        "scroll" { "scroll" }
+        "keyboard" { "settings" }
+        default { "editor" }
+    }
     $replay = Start-Process -FilePath $FixturePath -ArgumentList $replayMode -PassThru
     $replay.WaitForInputIdle(10000) | Out-Null
     Start-Sleep -Milliseconds 700
@@ -112,7 +124,13 @@ try {
     $editor = @($observed.elements | Where-Object { $_.automation_id -eq "note-editor" -and $_.value -eq "meeting" })
     $saved = @($observed.elements | Where-Object { $_.name -eq "저장됨" })
     $scrolled = @($observed.elements | Where-Object { $_.automation_id -eq "scroll-status" -and $_.name -eq "아래 항목 표시됨" })
-    $outcomeVisible = if ($Scenario -eq "scroll") { $scrolled.Count -eq 1 } else { $editor.Count -eq 1 -and $saved.Count -eq 1 }
+    $toggled = @($observed.elements | Where-Object { $_.automation_id -eq "dark-mode" -and $_.value -eq "On" })
+    $darkStatus = @($observed.elements | Where-Object { $_.automation_id -eq "mode-status" -and $_.name -eq "어두운 모드 사용 중" })
+    $outcomeVisible = switch ($Scenario) {
+        "scroll" { $scrolled.Count -eq 1 }
+        "keyboard" { $toggled.Count -eq 1 -and $darkStatus.Count -eq 1 }
+        default { $editor.Count -eq 1 -and $saved.Count -eq 1 }
+    }
     $passed = $run.Status -eq "SUCCESS" -and $outcomeVisible
     $summary = [ordered]@{
         executedAt = [DateTimeOffset]::Now
@@ -127,7 +145,8 @@ try {
         videoEvidenceFrameCount = @($workflowDocument.videoEvidence).Count
         runStatus = $run.Status
         visibleEditorValue = if ($editor.Count -eq 1) { $editor[0].value } else { $null }
-        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
+        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } else { $null }
+        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
         passed = $passed
     }
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")

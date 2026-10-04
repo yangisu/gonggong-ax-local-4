@@ -135,6 +135,24 @@ public static class RecordedSemanticWorkflowExtractor
                 continue;
             }
 
+            if (current.Event.ActionKind == MacroActionKind.KeyStroke
+                && TryGetActivationKind(current.Event, out var activationKind))
+            {
+                RequireActivationEvidence(current.Event);
+                var after = current.Event.SemanticAfter
+                    ?? (index + 1 == events.Count ? finalFrame : null)
+                    ?? throw new InvalidOperationException("키보드 활성화 뒤 의미 화면을 확인할 수 없습니다.");
+                units.Add(new ExtractedUnit(
+                    [current],
+                    activationKind,
+                    current.Event.SemanticTarget!,
+                    null,
+                    current.Event.SemanticBefore!,
+                    after));
+                index++;
+                continue;
+            }
+
             if (current.Event.ActionKind == MacroActionKind.KeyStroke)
             {
                 RequireTextEvidence(current.Event);
@@ -255,6 +273,39 @@ public static class RecordedSemanticWorkflowExtractor
             throw new InvalidOperationException($"이벤트 {item.Sequence}의 대상은 검증 가능한 편집 필드가 아닙니다.");
         if (SensitiveTarget(item.SemanticTarget.Name))
             throw new InvalidOperationException($"민감 입력 필드는 의미 Workflow로 만들 수 없습니다: {item.SemanticTarget.Name}");
+    }
+
+    private static bool TryGetActivationKind(RecordedEvent item, out string kind)
+    {
+        kind = string.Empty;
+        if (item.SemanticTarget is null || item.ModifierKeyCodes.Length > 0) return false;
+        var keys = item.KeyCodes.Where(key => key is not (
+            KeyCode.VcLeftShift or KeyCode.VcRightShift
+            or KeyCode.VcLeftControl or KeyCode.VcRightControl
+            or KeyCode.VcLeftAlt or KeyCode.VcRightAlt
+            or KeyCode.VcLeftMeta or KeyCode.VcRightMeta)).ToArray();
+        if (keys.Length != 1) return false;
+        var roles = item.SemanticTarget.Roles;
+        if (keys[0] == KeyCode.VcSpace && roles.Any(role => role is "CheckBox" or "RadioButton"))
+        {
+            kind = "toggle";
+            return true;
+        }
+        if (keys[0] is KeyCode.VcEnter or KeyCode.VcSpace
+            && roles.Any(role => role is "Button" or "MenuItem" or "Hyperlink"))
+        {
+            kind = "click";
+            return true;
+        }
+        return false;
+    }
+
+    private static void RequireActivationEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 키보드 활성화 의미 증거가 없습니다.");
+        if (item.SemanticAfter is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 키보드 활성화 이후 화면 증거가 없습니다.");
     }
 
     private static void RequireScrollEvidence(RecordedEvent item)

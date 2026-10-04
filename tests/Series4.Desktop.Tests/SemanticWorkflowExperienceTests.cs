@@ -304,6 +304,79 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedSpaceOnACheckbox_BecomesASemanticToggleAndVerifiesTheUserResult()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("CheckBox", "어두운 모드", "dark-mode");
+            var before = Frame("keyboard-light", .3,
+                Element("CheckBox", "어두운 모드", "dark-mode", "Off"),
+                Element("Text", "밝은 모드 사용 중", "mode-status"));
+            var after = Frame("keyboard-dark", .6,
+                Element("CheckBox", "어두운 모드", "dark-mode", "On"),
+                Element("Text", "어두운 모드 사용 중", "mode-status"));
+            var recorded = RecordedKey(1, .45, KeyCode.VcSpace, before, after, target);
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "키보드로 어두운 모드를 켜 줘", video, 1, [recorded], after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("toggle", step.Action.Kind);
+            Assert.Equal([0], step.Evidence.EventIndices);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "어두운 모드 사용 중");
+        });
+    }
+
+    [Fact]
+    public void RecordedEnterOnAButton_BecomesASemanticClick()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Button", "다음", "next");
+            var before = Frame("enter-before", .3,
+                Element("Button", "다음", "next"),
+                Element("Text", "첫 화면", "status"));
+            var after = Frame("enter-after", .6,
+                Element("Text", "완료", "status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "키보드로 다음 화면을 열어 줘",
+                video,
+                1,
+                [RecordedKey(1, .45, KeyCode.VcEnter, before, after, target)],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("click", Assert.Single(workflow.Steps).Action.Kind);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "완료");
+        });
+    }
+
+    [Fact]
+    public void ModifiedKeyboardActivation_IsNotPromotedToAnUnattendedAction()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Button", "다음", "next");
+            var before = Frame("activation-before", .3, Element("Button", "다음", "next"));
+            var after = Frame("activation-after", .6, Element("Text", "완료", "done"));
+            var recorded = RecordedKey(1, .45, KeyCode.VcEnter, before, after, target);
+            recorded.ModifierKeyCodes = [KeyCode.VcLeftAlt];
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "다음 화면을 열어 줘", video, 1, [recorded], after));
+
+            Assert.Contains("Ctrl/Alt/Win", error.Message);
+        });
+    }
+
+    [Fact]
     public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
     {
         WithVideo(video =>

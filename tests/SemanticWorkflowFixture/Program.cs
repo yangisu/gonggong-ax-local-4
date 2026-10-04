@@ -23,11 +23,11 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "scroll-demo";
+        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
-            "settings" => SettingsContent(),
+            "settings" or "keyboard-demo" => SettingsContent(),
             "scroll" or "scroll-demo" => ScrollContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
@@ -59,6 +59,20 @@ public static class Program
                         mouse_event(MouseWheel, 0, 0, unchecked((uint)-120), UIntPtr.Zero);
                         Thread.Sleep(500);
                         mouse_event(MouseWheel, 0, 0, unchecked((uint)-120), UIntPtr.Zero);
+                    });
+                    return;
+                }
+                if (mode == "keyboard-demo")
+                {
+                    var toggle = FindDescendant<CheckBox>(window)
+                        ?? throw new InvalidOperationException("어두운 모드 설정을 찾지 못했습니다.");
+                    toggle.Focus();
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        keybd_event(0x20, 0, 0, UIntPtr.Zero);
+                        Thread.Sleep(120);
+                        keybd_event(0x20, 0, KeyUp, UIntPtr.Zero);
                     });
                     return;
                 }

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -339,9 +340,20 @@ internal static class SemanticUiBridge
         if (element.Current.IsPassword) return string.Empty;
         try
         {
-            return element.TryGetCurrentPattern(ValuePattern.Pattern, out var pattern)
-                ? ((ValuePattern)pattern).Current.Value[..Math.Min(2000, ((ValuePattern)pattern).Current.Value.Length)]
-                : string.Empty;
+            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var valuePattern))
+            {
+                var value = ((ValuePattern)valuePattern).Current.Value ?? string.Empty;
+                return value[..Math.Min(2000, value.Length)];
+            }
+            if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
+                return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
+            if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
+            {
+                var current = ((ScrollPattern)scrollPattern).Current;
+                return string.Create(CultureInfo.InvariantCulture,
+                    $"horizontal={current.HorizontalScrollPercent:0.###};vertical={current.VerticalScrollPercent:0.###}");
+            }
+            return string.Empty;
         }
         catch (ElementNotAvailableException) { return string.Empty; }
         catch (InvalidOperationException) { return string.Empty; }

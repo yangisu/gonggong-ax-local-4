@@ -107,6 +107,33 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
         });
     }
 
+    [WindowsIntegrationFact]
+    public void RecordedKeyboardActivation_ProducesTheDemonstratedToggleResultInARealWindow()
+    {
+        RunWithFixture("settings", video =>
+        {
+            var target = Selector("CheckBox", "어두운 모드", "dark-mode");
+            var before = Frame("keyboard-light", .3,
+                Element("CheckBox", "어두운 모드", "dark-mode", "Off"),
+                Element("Text", "밝은 모드 사용 중", "mode-status"));
+            var after = Frame("keyboard-dark", .7,
+                Element("CheckBox", "어두운 모드", "dark-mode", "On"),
+                Element("Text", "어두운 모드 사용 중", "mode-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "키보드로 어두운 모드를 켜 줘", video, 1,
+                [RecordedKey(1, .5, KeyCode.VcSpace, before, after, target)],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Contains(visible.Elements, element => element.AutomationId == "dark-mode" && element.Value == "On");
+            Assert.Contains(visible.Elements, element => element.Name == "어두운 모드 사용 중");
+        });
+    }
+
     private static void RunWithFixture(string mode, Action<string> test)
     {
         var executable = FixtureExecutable();
