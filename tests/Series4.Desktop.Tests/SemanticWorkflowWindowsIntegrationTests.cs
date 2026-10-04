@@ -57,6 +57,42 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     }
 
     [WindowsIntegrationFact]
+    public void RecordedKoreanImeTask_ProducesTheComposedTextInAFreshRealWindow()
+    {
+        RunWithFixture("korean", video =>
+        {
+            var target = Selector("Edit", "메모 내용", "note-editor");
+            var values = new[] { "", "ㅎ", "호", "회", "회ㅇ", "회으", "회의", "회의ㄹ", "회의로", "회의록", "회의록" };
+            var frames = values.Select((value, index) => Frame(
+                $"ime-{index}",
+                .3 + index * .12,
+                Element("Edit", "메모 내용", "note-editor", value))).ToArray();
+            var keys = new[]
+            {
+                KeyCode.VcG, KeyCode.VcH, KeyCode.VcL, KeyCode.VcD, KeyCode.VcM,
+                KeyCode.VcL, KeyCode.VcF, KeyCode.VcH, KeyCode.VcR, KeyCode.VcEnter,
+            };
+            var recorded = keys.Select((key, index) =>
+                RecordedKey(index + 1, .36 + index * .12, key, frames[index], frames[index + 1], target)).ToArray();
+            var final = Frame("ime-final", 1.8,
+                Element("Edit", "메모 내용", "note-editor", "회의록"),
+                Element("Text", "한글 저장됨", "note-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "메모에 회의록이라고 입력해 줘", video, 2, recorded, final);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Equal("회의록", Assert.Single(workflow.Steps).Action.Value);
+            Assert.Contains(visible.Elements,
+                element => element.AutomationId == "note-editor" && element.Value == "회의록");
+            Assert.Contains(visible.Elements, element => element.Name == "한글 저장됨");
+        });
+    }
+
+    [WindowsIntegrationFact]
     public void RecordedSettingsTask_ProducesTheVisibleEnabledStateInARealWindow()
     {
         RunWithFixture("settings", video =>

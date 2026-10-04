@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 7,
-  "passed": 7,
+  "total": 8,
+  "passed": 8,
   "failed": 0,
   "scenarios": [
     {
@@ -12,6 +12,15 @@
       "visibleUserOutcome": {
         "editorValue": "회의록",
         "status": "저장됨"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "메모에 회의록이라고 입력해 줘",
+      "workflowSource": "semantic demonstration with Korean IME composition intermediates and final editor value evidence",
+      "visibleUserOutcome": {
+        "editorValue": "회의록",
+        "status": "한글 저장됨"
       },
       "result": "PASS"
     },

@@ -212,36 +212,47 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
-    public void RecordedKeystrokes_AreGroupedByObservedEditorValueAndReproduceTheVisibleText()
+    public void RecordedKoreanImeComposition_IsGroupedByFinalEditorValueInsteadOfRawKeys()
     {
         WithVideo(video =>
         {
             var start = Frame("start", .2, Element("Button", "새 메모", "new"));
             var empty = Frame("key-empty", .6, Element("Edit", "메모 내용", "editor", ""));
-            var one = Frame("key-one", .72, Element("Edit", "메모 내용", "editor", "회"));
-            var two = Frame("key-two", .84, Element("Edit", "메모 내용", "editor", "회의"));
-            var typed = Frame("key-three", .96, Element("Edit", "메모 내용", "editor", "회의록"));
-            var final = Frame("final", 1.3,
+            var compositionValues = new[] { "ㅎ", "호", "회", "회ㅇ", "회으", "회의", "회의ㄹ", "회의로", "회의록", "회의록" };
+            var compositionFrames = compositionValues.Select((value, index) =>
+                Frame($"ime-{index + 1}", .72 + index * .12,
+                    Element("Edit", "메모 내용", "editor", value))).ToArray();
+            var final = Frame("final", 2.1,
                 Element("Edit", "메모 내용", "editor", "회의록"),
-                Element("Text", "저장됨", "saved"));
+                Element("Text", "한글 저장됨", "saved"));
             var target = Selector("Edit", "메모 내용", "editor");
-            var recorded = new[]
+            var keys = new[]
             {
-                RecordedClick(1, .3, start, Selector("Button", "새 메모", "new")),
-                RecordedKey(2, .65, KeyCode.VcH, empty, one, target),
-                RecordedKey(3, .77, KeyCode.VcO, one, two, target),
-                RecordedKey(4, .89, KeyCode.VcI, two, typed, target),
+                KeyCode.VcG, KeyCode.VcH, KeyCode.VcL, KeyCode.VcD, KeyCode.VcM,
+                KeyCode.VcL, KeyCode.VcF, KeyCode.VcH, KeyCode.VcR, KeyCode.VcEnter,
             };
+            var keyEvents = keys.Select((key, index) => RecordedKey(
+                index + 2,
+                .65 + index * .12,
+                key,
+                index == 0 ? empty : compositionFrames[index - 1],
+                compositionFrames[index],
+                target));
+            var recorded = new[] { RecordedClick(1, .3, start, Selector("Button", "새 메모", "new")) }
+                .Concat(keyEvents)
+                .ToArray();
 
             var workflow = RecordedSemanticWorkflowExtractor.Compile(
-                "새 메모를 만들고 회의록을 입력해 줘", video, 1.5, recorded, final);
+                "새 메모를 만들고 회의록을 입력해 줘", video, 2.4, recorded, final);
             var surface = new WorkflowFrameSurface([start, empty, final]);
             var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
 
             Assert.Equal("SUCCESS", result.Status);
             Assert.Equal("회의록", surface.Current.Elements.Single(element => element.AutomationId == "editor").Value);
             Assert.Equal(["recorded-1", "recorded-2"], surface.ExecutedSteps);
-            Assert.Equal([1, 2, 3], workflow.Steps[1].Evidence.EventIndices);
+            Assert.Equal("type", workflow.Steps[1].Action.Kind);
+            Assert.Equal("회의록", workflow.Steps[1].Action.Value);
+            Assert.Equal(Enumerable.Range(1, 10), workflow.Steps[1].Evidence.EventIndices);
             Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
         });
     }

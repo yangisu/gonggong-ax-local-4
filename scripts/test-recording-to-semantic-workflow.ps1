@@ -2,7 +2,7 @@ param(
     [string]$OutputDirectory = "artifacts/recording-to-semantic-workflow",
     [string]$EnginePath = "",
     [string]$FixturePath = "",
-    [ValidateSet("text", "scroll", "keyboard", "slider", "selection", "focus")]
+    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus")]
     [string]$Scenario = "text"
 )
 
@@ -72,6 +72,7 @@ try {
         "slider" { "slider-demo" }
         "selection" { "selection-demo" }
         "focus" { "focus-demo" }
+        "korean" { "korean-demo" }
         default { "editor-demo" }
     }
     $intent = switch ($Scenario) {
@@ -80,6 +81,7 @@ try {
         "slider" { "음량을 높여 줘" }
         "selection" { "색상을 파랑으로 선택해 줘" }
         "focus" { "Tab으로 검색 버튼까지 이동해 줘" }
+        "korean" { "메모에 회의록이라고 입력해 줘" }
         default { "새 메모를 만들고 meeting을 입력해 줘" }
     }
     $expectedAction = switch ($Scenario) {
@@ -125,6 +127,7 @@ try {
         "slider" { "slider" }
         "selection" { "selection" }
         "focus" { "focus" }
+        "korean" { "korean" }
         default { "editor" }
     }
     $replay = Start-Process -FilePath $FixturePath -ArgumentList $replayMode -PassThru
@@ -133,8 +136,10 @@ try {
 
     $run = Invoke-BridgeCommand @{ action = "run_semantic_workflow"; workflow_path = $workflowPath } 30
     $observed = Invoke-BridgeCommand @{ action = "observe_semantic"; max_elements = 200 } 15
-    $editor = @($observed.elements | Where-Object { $_.automation_id -eq "note-editor" -and $_.value -eq "meeting" })
-    $saved = @($observed.elements | Where-Object { $_.name -eq "저장됨" })
+    $expectedEditorValue = if ($Scenario -eq "korean") { "회의록" } else { "meeting" }
+    $expectedSavedStatus = if ($Scenario -eq "korean") { "한글 저장됨" } else { "저장됨" }
+    $editor = @($observed.elements | Where-Object { $_.automation_id -eq "note-editor" -and $_.value -eq $expectedEditorValue })
+    $saved = @($observed.elements | Where-Object { $_.name -eq $expectedSavedStatus })
     $scrolled = @($observed.elements | Where-Object { $_.automation_id -eq "scroll-status" -and $_.name -eq "아래 항목 표시됨" })
     $toggled = @($observed.elements | Where-Object { $_.automation_id -eq "dark-mode" -and $_.value -eq "On" })
     $darkStatus = @($observed.elements | Where-Object { $_.automation_id -eq "mode-status" -and $_.name -eq "어두운 모드 사용 중" })

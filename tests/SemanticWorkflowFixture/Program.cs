@@ -14,17 +14,25 @@ public static class Program
     private const uint MouseLeftUp = 0x0004;
     private const uint MouseWheel = 0x0800;
     private const uint KeyUp = 0x0002;
+    private const uint KlfActivate = 0x00000001;
+    private const uint ImeCmodeNative = 0x00000001;
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern void keybd_event(byte virtualKey, byte scanCode, uint flags, UIntPtr extraInfo);
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr LoadKeyboardLayout(string layoutId, uint flags);
+    [DllImport("user32.dll")] private static extern IntPtr ActivateKeyboardLayout(IntPtr layout, uint flags);
+    [DllImport("imm32.dll")] private static extern IntPtr ImmGetContext(IntPtr window);
+    [DllImport("imm32.dll")] private static extern bool ImmReleaseContext(IntPtr window, IntPtr context);
+    [DllImport("imm32.dll")] private static extern bool ImmSetOpenStatus(IntPtr context, bool open);
+    [DllImport("imm32.dll")] private static extern bool ImmSetConversionStatus(IntPtr context, uint conversion, uint sentence);
 
     [STAThread]
     public static void Main(string[] args)
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo";
+        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
@@ -33,6 +41,7 @@ public static class Program
             "slider" or "slider-demo" => SliderContent(),
             "selection" or "selection-demo" => SelectionContent(),
             "focus" or "focus-demo" => FocusContent(),
+            "korean" or "korean-demo" => KoreanEditorContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
@@ -144,7 +153,22 @@ public static class Program
                     ?? throw new InvalidOperationException("메모 편집기를 찾지 못했습니다.");
                 editor.Focus();
                 await Task.Delay(300);
-                await Task.Run(() => TypeAscii("meeting"));
+                if (mode == "korean-demo")
+                {
+                    EnableKoreanIme(new WindowInteropHelper(window).Handle);
+                    await Task.Delay(500);
+                    await Task.Run(() =>
+                    {
+                        TypeAscii("ghldmlfhr");
+                        keybd_event(0x0D, 0, 0, UIntPtr.Zero);
+                        Thread.Sleep(120);
+                        keybd_event(0x0D, 0, KeyUp, UIntPtr.Zero);
+                    });
+                }
+                else
+                {
+                    await Task.Run(() => TypeAscii("meeting"));
+                }
             };
         }
         application.Run(window);
@@ -185,6 +209,26 @@ public static class Program
         }
     }
 
+    private static void EnableKoreanIme(IntPtr window)
+    {
+        var layout = LoadKeyboardLayout("00000412", KlfActivate);
+        if (layout == IntPtr.Zero || ActivateKeyboardLayout(layout, 0) == IntPtr.Zero)
+            throw new InvalidOperationException("한국어 키보드 레이아웃을 활성화하지 못했습니다.");
+        var context = ImmGetContext(window);
+        if (context == IntPtr.Zero)
+            throw new InvalidOperationException("한국어 IME 컨텍스트를 찾지 못했습니다.");
+        try
+        {
+            if (!ImmSetOpenStatus(context, true)
+                || !ImmSetConversionStatus(context, ImeCmodeNative, 0))
+                throw new InvalidOperationException("한국어 IME 조합 모드를 활성화하지 못했습니다.");
+        }
+        finally
+        {
+            ImmReleaseContext(window, context);
+        }
+    }
+
     private static T? FindDescendant<T>(DependencyObject parent) where T : DependencyObject
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
@@ -211,6 +255,26 @@ public static class Program
         editor.TextChanged += (_, _) =>
         {
             status.Text = string.IsNullOrEmpty(editor.Text) ? "입력 대기" : "저장됨";
+            AutomationProperties.SetName(status, status.Text);
+        };
+        panel.Children.Add(editor);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement KoreanEditorContent()
+    {
+        var panel = Panel("한글 메모 편집 중");
+        var editor = Named(new TextBox
+        {
+            Width = 440,
+            Height = 44,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        }, "note-editor", "메모 내용");
+        var status = Named(new TextBlock { Text = "입력 대기", FontSize = 18 }, "note-status", "입력 대기");
+        editor.TextChanged += (_, _) =>
+        {
+            status.Text = string.IsNullOrEmpty(editor.Text) ? "입력 대기" : "한글 저장됨";
             AutomationProperties.SetName(status, status.Text);
         };
         panel.Children.Add(editor);
