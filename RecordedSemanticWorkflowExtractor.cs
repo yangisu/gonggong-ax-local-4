@@ -5,6 +5,7 @@ namespace Series4.Desktop;
 public static class RecordedSemanticWorkflowExtractor
 {
     private static readonly TimeSpan MaximumTextKeyGap = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaximumSelectionKeyGap = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaximumWheelGap = TimeSpan.FromSeconds(1);
 
     public static SemanticWorkflowDefinition Compile(
@@ -150,6 +151,40 @@ public static class RecordedSemanticWorkflowExtractor
                     current.Event.SemanticBefore!,
                     after));
                 index++;
+                continue;
+            }
+
+            if (current.Event.ActionKind == MacroActionKind.KeyStroke
+                && IsSelectionNavigation(current.Event))
+            {
+                RequireSelectionEvidence(current.Event);
+                var group = new List<IndexedEvent> { current };
+                var cursor = index + 1;
+                while (cursor < events.Count
+                    && events[cursor].Event.ActionKind == MacroActionKind.KeyStroke
+                    && IsSelectionNavigation(events[cursor].Event)
+                    && SameTarget(current.Event.SemanticTarget!, events[cursor].Event.SemanticTarget)
+                    && events[cursor].Event.Offset - events[cursor - 1].Event.Offset <= MaximumSelectionKeyGap)
+                {
+                    RequireSelectionEvidence(events[cursor].Event);
+                    group.Add(events[cursor]);
+                    cursor++;
+                }
+                var before = group[0].Event.SemanticBefore!;
+                var after = group[^1].Event.SemanticAfter
+                    ?? throw new InvalidOperationException("선택 탐색 뒤 의미 화면을 확인할 수 없습니다.");
+                var initialValue = TargetValue(before, current.Event.SemanticTarget!);
+                var finalValue = TargetValue(after, current.Event.SemanticTarget!);
+                if (string.IsNullOrWhiteSpace(finalValue) || finalValue == initialValue || finalValue.Length > 1000)
+                    throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 최종 선택값을 의미적으로 확인할 수 없습니다.");
+                units.Add(new ExtractedUnit(
+                    group,
+                    "select-option",
+                    current.Event.SemanticTarget!,
+                    finalValue,
+                    before,
+                    after));
+                index = cursor;
                 continue;
             }
 
@@ -328,6 +363,28 @@ public static class RecordedSemanticWorkflowExtractor
             throw new InvalidOperationException($"이벤트 {item.Sequence}에 키보드 활성화 의미 증거가 없습니다.");
         if (item.SemanticAfter is null)
             throw new InvalidOperationException($"이벤트 {item.Sequence}에 키보드 활성화 이후 화면 증거가 없습니다.");
+    }
+
+    private static bool IsSelectionNavigation(RecordedEvent item)
+    {
+        if (item.SemanticTarget is null
+            || item.ModifierKeyCodes.Length > 0
+            || !item.SemanticTarget.Roles.Any(role => role is "ComboBox" or "List"))
+            return false;
+        var keys = item.KeyCodes.Where(key => key is not (
+            KeyCode.VcLeftShift or KeyCode.VcRightShift
+            or KeyCode.VcLeftControl or KeyCode.VcRightControl
+            or KeyCode.VcLeftAlt or KeyCode.VcRightAlt
+            or KeyCode.VcLeftMeta or KeyCode.VcRightMeta)).ToArray();
+        return keys.Length == 1 && keys[0] is
+            KeyCode.VcUp or KeyCode.VcDown or KeyCode.VcHome or KeyCode.VcEnd
+            or KeyCode.VcPageUp or KeyCode.VcPageDown;
+    }
+
+    private static void RequireSelectionEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 선택 전후 의미 증거가 없습니다.");
     }
 
     private static void RequireScrollEvidence(RecordedEvent item)

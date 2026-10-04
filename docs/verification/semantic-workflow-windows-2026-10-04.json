@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 5,
-  "passed": 5,
+  "total": 6,
+  "passed": 6,
   "failed": 0,
   "scenarios": [
     {
@@ -47,6 +47,15 @@
       "visibleUserOutcome": {
         "sliderValue": "75",
         "status": "음량 75"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "색상을 파랑으로 선택해 줘",
+      "workflowSource": "semantic demonstration with synchronized arrow keys and final option evidence",
+      "visibleUserOutcome": {
+        "selectedValue": "파랑",
+        "status": "선택: 파랑"
       },
       "result": "PASS"
     }

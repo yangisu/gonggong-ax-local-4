@@ -219,6 +219,11 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                     throw new InvalidOperationException("TARGET_MISMATCH: 대상이 의미 기반 텍스트 입력을 지원하지 않습니다.");
                 ((ValuePattern)valuePattern).SetValue(value);
                 break;
+            case "select-option":
+                if (action.Value is not { Length: > 0 } option || option.Length > 1000)
+                    throw new InvalidOperationException("선택 항목은 1~1000자여야 합니다.");
+                SelectUniqueOption(element, option);
+                break;
             case "toggle":
                 if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
                     ((TogglePattern)togglePattern).Toggle();
@@ -377,6 +382,16 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
             if (element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
                 return ((RangeValuePattern)rangePattern).Current.Value.ToString("R", CultureInfo.InvariantCulture);
+            if (element.TryGetCurrentPattern(SelectionPattern.Pattern, out var selectionPattern))
+            {
+                var selection = ((SelectionPattern)selectionPattern).Current.GetSelection()
+                    .Select(item => item.Current.Name ?? string.Empty)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(2)
+                    .ToArray();
+                if (selection.Length == 1) return selection[0];
+            }
             if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
             {
                 var current = ((ScrollPattern)scrollPattern).Current;
@@ -449,6 +464,40 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         if (!SetCursorPos(x, y)) throw new InvalidOperationException("마우스 포인터를 의미 대상에 이동하지 못했습니다.");
         mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
         mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    private static void SelectUniqueOption(AutomationElement element, string option)
+    {
+        ExpandCollapsePattern? expansion = null;
+        if (element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expandPattern))
+        {
+            expansion = (ExpandCollapsePattern)expandPattern;
+            if (expansion.Current.ExpandCollapseState == ExpandCollapseState.Collapsed)
+            {
+                expansion.Expand();
+                Thread.Sleep(150);
+            }
+        }
+        try
+        {
+            var candidates = element.FindAll(TreeScope.Descendants, Condition.TrueCondition)
+                .Cast<AutomationElement>()
+                .Where(item => item.Current.IsEnabled
+                    && string.Equals((item.Current.Name ?? string.Empty).Trim(), option.Trim(), StringComparison.OrdinalIgnoreCase)
+                    && item.TryGetCurrentPattern(SelectionItemPattern.Pattern, out _))
+                .Take(2)
+                .ToArray();
+            if (candidates.Length != 1)
+                throw new InvalidOperationException($"TARGET_MISMATCH: 선택 항목이 {candidates.Length}개입니다.");
+            if (!candidates[0].TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selection))
+                throw new InvalidOperationException("TARGET_MISMATCH: 항목을 의미적으로 선택할 수 없습니다.");
+            ((SelectionItemPattern)selection).Select();
+        }
+        finally
+        {
+            if (expansion is not null && expansion.Current.ExpandCollapseState == ExpandCollapseState.Expanded)
+                expansion.Collapse();
+        }
     }
 
     private static bool IsActionablePointerTarget(AutomationElement element)

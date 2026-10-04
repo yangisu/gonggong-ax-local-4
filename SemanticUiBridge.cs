@@ -235,6 +235,37 @@ internal static class SemanticUiBridge
                     scrollCommand.Axis == "vertical" ? increment : ScrollAmount.NoAmount);
             method = "uia-scroll";
         }
+        else if (action == "select-option")
+        {
+            if (text.Length is < 1 or > 1000)
+                throw new ArgumentException("Selection value length must be 1 to 1000 characters.");
+            ExpandCollapsePattern? expansion = null;
+            if (element.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out var expandPattern))
+            {
+                expansion = (ExpandCollapsePattern)expandPattern;
+                if (expansion.Current.ExpandCollapseState == ExpandCollapseState.Collapsed)
+                {
+                    expansion.Expand();
+                    Thread.Sleep(150);
+                }
+            }
+            try
+            {
+                var matches = Enumerate(element, 300).Where(item =>
+                    string.Equals((item.Current.Name ?? string.Empty).Trim(), text.Trim(), StringComparison.OrdinalIgnoreCase)
+                    && item.TryGetCurrentPattern(SelectionItemPattern.Pattern, out _)).Take(2).ToArray();
+                if (matches.Length != 1
+                    || !matches[0].TryGetCurrentPattern(SelectionItemPattern.Pattern, out var selection))
+                    throw new InvalidOperationException($"TARGET_MISMATCH: semantic option count is {matches.Length}.");
+                ((SelectionItemPattern)selection).Select();
+                method = "uia-select-option";
+            }
+            finally
+            {
+                if (expansion is not null && expansion.Current.ExpandCollapseState == ExpandCollapseState.Expanded)
+                    expansion.Collapse();
+            }
+        }
         else if (action == "toggle" && element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
         {
             ((TogglePattern)togglePattern).Toggle();
@@ -373,6 +404,16 @@ internal static class SemanticUiBridge
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
             if (element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
                 return ((RangeValuePattern)rangePattern).Current.Value.ToString("R", CultureInfo.InvariantCulture);
+            if (element.TryGetCurrentPattern(SelectionPattern.Pattern, out var selectionPattern))
+            {
+                var selection = ((SelectionPattern)selectionPattern).Current.GetSelection()
+                    .Select(item => item.Current.Name ?? string.Empty)
+                    .Where(name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Take(2)
+                    .ToArray();
+                if (selection.Length == 1) return selection[0];
+            }
             if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
             {
                 var current = ((ScrollPattern)scrollPattern).Current;

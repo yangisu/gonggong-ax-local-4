@@ -24,13 +24,14 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo";
+        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
             "settings" or "keyboard-demo" => SettingsContent(),
             "scroll" or "scroll-demo" => ScrollContent(),
             "slider" or "slider-demo" => SliderContent(),
+            "selection" or "selection-demo" => SelectionContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
@@ -99,6 +100,24 @@ public static class Program
                             Thread.Sleep(50);
                         }
                         mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero);
+                    });
+                    return;
+                }
+                if (mode == "selection-demo")
+                {
+                    var combo = FindDescendant<ComboBox>(window)
+                        ?? throw new InvalidOperationException("색상 선택기를 찾지 못했습니다.");
+                    combo.Focus();
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        for (var index = 0; index < 2; index++)
+                        {
+                            keybd_event(0x28, 0, 0, UIntPtr.Zero);
+                            Thread.Sleep(120);
+                            keybd_event(0x28, 0, KeyUp, UIntPtr.Zero);
+                            Thread.Sleep(300);
+                        }
                     });
                     return;
                 }
@@ -244,6 +263,28 @@ public static class Program
             AutomationProperties.SetName(status, status.Text);
         };
         panel.Children.Add(slider);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement SelectionContent()
+    {
+        var panel = Panel("색상 설정");
+        var status = Named(new TextBlock { Text = "선택: 빨강", FontSize = 18 }, "color-status", "선택: 빨강");
+        var combo = Named(new ComboBox
+        {
+            Width = 260,
+            Height = 44,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            ItemsSource = new[] { "빨강", "초록", "파랑" },
+            SelectedIndex = 0,
+        }, "color-selector", "색상");
+        combo.SelectionChanged += (_, _) =>
+        {
+            status.Text = $"선택: {combo.SelectedItem}";
+            AutomationProperties.SetName(status, status.Text);
+        };
+        panel.Children.Add(combo);
         panel.Children.Add(status);
         return panel;
     }

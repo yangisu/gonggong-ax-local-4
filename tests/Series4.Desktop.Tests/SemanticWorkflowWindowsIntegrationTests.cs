@@ -161,6 +161,38 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
         });
     }
 
+    [WindowsIntegrationFact]
+    public void RecordedArrowNavigation_SelectsTheDemonstratedOptionInARealWindow()
+    {
+        RunWithFixture("selection", video =>
+        {
+            var target = Selector("ComboBox", "색상", "color-selector");
+            var before = Frame("select-red", .3,
+                Element("ComboBox", "색상", "color-selector", "빨강"),
+                Element("Text", "선택: 빨강", "color-status"));
+            var middle = Frame("select-green", .55,
+                Element("ComboBox", "색상", "color-selector", "초록"));
+            var after = Frame("select-blue", .8,
+                Element("ComboBox", "색상", "color-selector", "파랑"),
+                Element("Text", "선택: 파랑", "color-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "색상을 파랑으로 선택해 줘", video, 1.2,
+                [
+                    RecordedKey(1, .45, KeyCode.VcDown, before, middle, target),
+                    RecordedKey(2, .7, KeyCode.VcDown, middle, after, target),
+                ],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Contains(visible.Elements, element => element.AutomationId == "color-selector" && element.Value == "파랑");
+            Assert.Contains(visible.Elements, element => element.Name == "선택: 파랑");
+        });
+    }
+
     private static void RunWithFixture(string mode, Action<string> test)
     {
         var executable = FixtureExecutable();

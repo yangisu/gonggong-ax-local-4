@@ -428,6 +428,40 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedArrowNavigation_BecomesASelectionByFinalOptionName()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("ComboBox", "색상", "color-selector");
+            var before = Frame("select-red", .3,
+                Element("ComboBox", "색상", "color-selector", "빨강"),
+                Element("Text", "선택: 빨강", "color-status"));
+            var middle = Frame("select-green", .55,
+                Element("ComboBox", "색상", "color-selector", "초록"));
+            var after = Frame("select-blue", .8,
+                Element("ComboBox", "색상", "color-selector", "파랑"),
+                Element("Text", "선택: 파랑", "color-status"));
+            var recorded = new[]
+            {
+                RecordedKey(1, .45, KeyCode.VcDown, before, middle, target),
+                RecordedKey(2, .7, KeyCode.VcDown, middle, after, target),
+            };
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "색상을 파랑으로 선택해 줘", video, 1.2, recorded, after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("select-option", step.Action.Kind);
+            Assert.Equal("파랑", step.Action.Value);
+            Assert.Equal([0, 1], step.Evidence.EventIndices);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "선택: 파랑");
+        });
+    }
+
+    [Fact]
     public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
     {
         WithVideo(video =>
