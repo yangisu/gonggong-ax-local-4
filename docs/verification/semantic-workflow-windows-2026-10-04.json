@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 11,
-  "passed": 11,
+  "total": 12,
+  "passed": 12,
   "failed": 0,
   "scenarios": [
     {
@@ -106,6 +106,18 @@
         "focusedAutomationId": "focus-search",
         "keyboardFocused": true,
         "status": "포커스: 검색"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "접근성 정보가 없는 화면 결과를 만들어 줘",
+      "workflowSource": "synchronized 96x64 grayscale window signatures with a changed-pixel mask; UI Automation outcome unchanged",
+      "visibleUserOutcome": {
+        "action": "click",
+        "accessibilityOutcomeChanged": false,
+        "beforeExpectedDifference": 110.5952380952381,
+        "afterExpectedDifference": 0,
+        "visualStateMatched": true
       },
       "result": "PASS"
     }

@@ -7,7 +7,7 @@ using System.Windows.Automation;
 
 namespace Series4.Desktop;
 
-public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
+public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface, ISemanticVisualWorkflowSurface
 {
     private const uint MouseeventfLeftdown = 0x0002;
     private const uint MouseeventfLeftup = 0x0004;
@@ -16,12 +16,17 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
     [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
 
+    private IReadOnlyList<SemanticVisualStateRequirement> visualRequirements = [];
+
+    public void ConfigureVisualStates(IReadOnlyList<SemanticVisualStateRequirement> requirements) =>
+        visualRequirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
+
     public SemanticWorkflowObservation Observe()
     {
         Exception? last = null;
         for (var attempt = 0; attempt < 8; attempt++)
         {
-            try { return ObserveOnce(); }
+            try { return ObserveOnce(visualRequirements); }
             catch (Exception error) when (error is ElementNotAvailableException or COMException or InvalidOperationException)
             {
                 last = error;
@@ -75,7 +80,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 element.Offscreen,
                 element.Password,
                 element.KeyboardFocused,
-                element.Bounds)).ToArray());
+                element.Bounds)).ToArray(),
+            VisualSignature: WindowsVisualAnchor.CaptureSignature(GetForegroundWindow()));
         return (frame, target);
     }
 
@@ -183,7 +189,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         return (
             new SemanticDemonstrationFrame(
                 id, offsetSeconds, process, observation?.WindowTitle ?? root.Current.Name ?? string.Empty,
-                observation?.Url ?? string.Empty, elements),
+                observation?.Url ?? string.Empty, elements,
+                VisualSignature: WindowsVisualAnchor.CaptureSignature(GetForegroundWindow())),
             target);
     }
 
@@ -321,7 +328,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         }
     }
 
-    private static SemanticWorkflowObservation ObserveOnce()
+    private static SemanticWorkflowObservation ObserveOnce(
+        IReadOnlyList<SemanticVisualStateRequirement>? visualRequirements = null)
     {
         var root = ForegroundRoot();
         var processId = root.Current.ProcessId;
@@ -341,7 +349,22 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         catch (ElementNotAvailableException) { }
         var elements = EnumerateWithRoot(root, 600).Select(element => ToElement(element, focusedRuntimeId)).ToArray();
         var url = ReadActiveUrl(root);
-        return new SemanticWorkflowObservation(process, title, url, elements, Revision(process, title, url, elements));
+        Dictionary<string, SemanticVisualStateObservation>? visualStates = null;
+        if (visualRequirements is { Count: > 0 })
+        {
+            visualStates = new Dictionary<string, SemanticVisualStateObservation>(StringComparer.Ordinal);
+            var window = GetForegroundWindow();
+            foreach (var requirement in visualRequirements)
+            {
+                var signature = WindowsVisualAnchor.CaptureSignature(
+                    window,
+                    requirement.Expected.Width,
+                    requirement.Expected.Height);
+                visualStates[requirement.Id] = SemanticWorkflowCompiler.EvaluateVisualState(signature, requirement);
+            }
+        }
+        return new SemanticWorkflowObservation(
+            process, title, url, elements, Revision(process, title, url, elements), visualStates);
     }
 
     private static SemanticDemonstrationFrame ToFrame(
@@ -362,7 +385,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 element.Offscreen,
                 element.Password,
                 element.KeyboardFocused,
-                element.Bounds)).ToArray());
+                element.Bounds)).ToArray(),
+            VisualSignature: WindowsVisualAnchor.CaptureSignature(GetForegroundWindow()));
 
     private static AutomationElement ForegroundRoot()
     {

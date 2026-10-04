@@ -69,6 +69,34 @@ public static class WindowsVisualAnchor
         return FindUnique(capture.Bgra32, capture.Width, capture.Height, capture.Left, capture.Top, anchor);
     }
 
+    public static SemanticVisualSignature CaptureSignature(IntPtr window, int width = 96, int height = 64)
+    {
+        if (width is < 16 or > 256 || height is < 16 or > 256)
+            throw new ArgumentOutOfRangeException(nameof(width));
+        var capture = Capture(window);
+        var gray = new byte[width * height];
+        for (var targetY = 0; targetY < height; targetY++)
+        {
+            var sourceTop = targetY * capture.Height / height;
+            var sourceBottom = Math.Max(sourceTop + 1, (targetY + 1) * capture.Height / height);
+            for (var targetX = 0; targetX < width; targetX++)
+            {
+                var sourceLeft = targetX * capture.Width / width;
+                var sourceRight = Math.Max(sourceLeft + 1, (targetX + 1) * capture.Width / width);
+                long total = 0;
+                var count = 0;
+                for (var sourceY = sourceTop; sourceY < sourceBottom; sourceY++)
+                for (var sourceX = sourceLeft; sourceX < sourceRight; sourceX++)
+                {
+                    total += Gray(capture.Bgra32, capture.Width, sourceX, sourceY);
+                    count++;
+                }
+                gray[targetY * width + targetX] = checked((byte)(total / count));
+            }
+        }
+        return new SemanticVisualSignature(1, width, height, Convert.ToBase64String(gray));
+    }
+
     public static SemanticVisualAnchor CreateAnchorFromPixels(
         byte[] bgra32,
         int width,

@@ -22,6 +22,8 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr window);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
 
     [WindowsIntegrationFact]
     public void RecordedNoteTask_ProducesVisibleTextAndSavedStateInARealWindow()
@@ -391,6 +393,61 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
                 element => element.AutomationId == "focus-search" && element.KeyboardFocused);
             Assert.Contains(visible.Elements, element => element.Name == "포커스: 검색");
         });
+    }
+
+    [WindowsIntegrationFact]
+    public void PixelOnlyOutcome_IsVerifiedFromTheRecordedScreenWhenAccessibilityDoesNotChange()
+    {
+        RunWithFixture("pixel-outcome", video =>
+        {
+            var surface = new WindowsSemanticWorkflowSurface();
+            var observed = surface.Observe();
+            var trigger = Assert.Single(observed.Elements, element => element.AutomationId == "pixel-trigger");
+            var bounds = Assert.IsType<SemanticBounds>(trigger.Bounds);
+            var x = bounds.Left + bounds.Width / 2;
+            var y = bounds.Top + bounds.Height / 2;
+            NativeClick(x, y);
+            NativeClick(x, y);
+            Thread.Sleep(250);
+            var (beforeCaptured, target) = WindowsSemanticWorkflowSurface.CapturePointDemonstrationFrame(
+                "pixel-before", .3, x, y);
+            var before = beforeCaptured with { VideoFrameSha256 = FrameHash("pixel-before") };
+            Assert.Equal("pixel-trigger", target?.AutomationId);
+
+            NativeClick(x, y);
+            Thread.Sleep(350);
+            var (afterCaptured, _) = WindowsSemanticWorkflowSurface.CapturePointDemonstrationFrame(
+                "pixel-after", .8, x, y);
+            var after = afterCaptured with { VideoFrameSha256 = FrameHash("pixel-after") };
+            Assert.Equal(
+                before.Elements.Select(element => (element.Role, element.Name, element.Value)),
+                after.Elements.Select(element => (element.Role, element.Name, element.Value)));
+
+            NativeClick(x, y);
+            Thread.Sleep(350);
+            var demonstration = new SemanticDemonstration(
+                "접근성 정보가 없는 파란 표시를 눌러 초록 결과를 만들어 줘",
+                video,
+                1.2,
+                [new(0, .5, "MouseLeftClick")],
+                [before, after],
+                [new("pixel-only-click", 0, .5, "click", target, null, "pixel-before", "pixel-after")]);
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Single(workflow.Steps[0].SuccessCondition.RequiredVisualStates!);
+            Assert.Contains("visualStates", result.Journal[^1].Observation);
+        });
+    }
+
+    private static void NativeClick(double x, double y)
+    {
+        SetCursorPos(checked((int)Math.Round(x)), checked((int)Math.Round(y)));
+        mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(80);
+        mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
     }
 
     private static void RunWithFixture(string mode, Action<string> test)

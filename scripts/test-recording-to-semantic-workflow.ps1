@@ -2,7 +2,7 @@ param(
     [string]$OutputDirectory = "artifacts/recording-to-semantic-workflow",
     [string]$EnginePath = "",
     [string]$FixturePath = "",
-    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus", "reorder", "canvas", "vision", "vision-click", "vision-ambiguous", "vision-runtime-ambiguous")]
+    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus", "reorder", "canvas", "vision", "vision-click", "pixel-outcome", "vision-ambiguous", "vision-runtime-ambiguous")]
     [string]$Scenario = "text"
 )
 
@@ -77,6 +77,7 @@ try {
         "canvas" { "canvas-demo" }
         "vision" { "vision-demo" }
         "vision-click" { "vision-click-demo" }
+        "pixel-outcome" { "pixel-outcome-demo" }
         "vision-ambiguous" { "vision-ambiguous-demo" }
         "vision-runtime-ambiguous" { "vision-demo" }
         default { "editor-demo" }
@@ -92,6 +93,7 @@ try {
         "canvas" { "도형을 작업 영역 오른쪽으로 이동해 줘" }
         "vision" { "영상에서 본 파란 도형을 오른쪽으로 이동해 줘" }
         "vision-click" { "영상에서 본 파란 버튼을 눌러 줘" }
+        "pixel-outcome" { "표시 전환 버튼을 눌러 초록 화면 결과를 만들어 줘" }
         "vision-ambiguous" { "왼쪽 파란 도형을 오른쪽으로 이동해 줘" }
         "vision-runtime-ambiguous" { "영상에서 본 파란 도형을 오른쪽으로 이동해 줘" }
         default { "새 메모를 만들고 meeting을 입력해 줘" }
@@ -106,6 +108,7 @@ try {
         "canvas" { "drag-within" }
         "vision" { "visual-drag" }
         "vision-click" { "visual-click" }
+        "pixel-outcome" { "click" }
         "vision-ambiguous" { "rejected" }
         "vision-runtime-ambiguous" { "visual-drag" }
         default { "type" }
@@ -167,6 +170,9 @@ try {
     if ($Scenario -in @("vision", "vision-click", "vision-runtime-ambiguous") -and -not $workflowDocument.steps[0].action.target.visualAnchor.grayBase64) {
         throw "영상 동기 시각 대상 템플릿이 Workflow에 보존되지 않았습니다."
     }
+    if ($Scenario -eq "pixel-outcome" -and ($null -eq $workflowDocument.steps[0].successCondition.requiredVisualStates -or @($workflowDocument.steps[0].successCondition.requiredVisualStates).Count -ne 1)) {
+        throw "접근성 변화가 없는 화면 결과가 픽셀 성공 조건으로 보존되지 않았습니다."
+    }
 
     if ($demonstration -and -not $demonstration.HasExited) {
         $demonstration.CloseMainWindow() | Out-Null
@@ -183,6 +189,7 @@ try {
         "canvas" { "canvas" }
         "vision" { "vision" }
         "vision-click" { "vision-click" }
+        "pixel-outcome" { "pixel-outcome" }
         "vision-runtime-ambiguous" { "vision-duplicate" }
         default { "editor" }
     }
@@ -244,6 +251,7 @@ try {
         "canvas" { $canvasStatus.Count -eq 1 }
         "vision" { $visionStatus.Count -eq 1 }
         "vision-click" { $visionClickStatus.Count -eq 1 }
+        "pixel-outcome" { $null -ne $workflowDocument.steps[0].successCondition.requiredVisualStates -and @($workflowDocument.steps[0].successCondition.requiredVisualStates).Count -eq 1 }
         default { $editor.Count -eq 1 -and $saved.Count -eq 1 }
     }
     $passed = $run.Status -eq "SUCCESS" -and $outcomeVisible
@@ -260,7 +268,7 @@ try {
         videoEvidenceFrameCount = @($workflowDocument.videoEvidence).Count
         runStatus = $run.Status
         visibleEditorValue = if ($editor.Count -eq 1) { $editor[0].value } else { $null }
-        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } elseif ($reordered.Count -eq 1) { $reordered[0].value } elseif ($canvasStatus.Count -eq 1) { "relative-surface-drag" } elseif ($visionStatus.Count -eq 1) { "unique-visual-anchor-drag" } elseif ($visionClickStatus.Count -eq 1) { "unique-visual-anchor-click" } else { $null }
+        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } elseif ($reordered.Count -eq 1) { $reordered[0].value } elseif ($canvasStatus.Count -eq 1) { "relative-surface-drag" } elseif ($visionStatus.Count -eq 1) { "unique-visual-anchor-drag" } elseif ($visionClickStatus.Count -eq 1) { "unique-visual-anchor-click" } elseif ($Scenario -eq "pixel-outcome") { "recorded-pixel-state-verified" } else { $null }
         visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($Scenario -eq "focus" -and $focusStatus.Count -eq 1) { $focusStatus[0].name } elseif ($Scenario -eq "reorder" -and $reorderStatus.Count -eq 1) { $reorderStatus[0].name } elseif ($Scenario -eq "canvas" -and $canvasStatus.Count -eq 1) { $canvasStatus[0].name } elseif ($Scenario -eq "vision" -and $visionStatus.Count -eq 1) { $visionStatus[0].name } elseif ($Scenario -eq "vision-click" -and $visionClickStatus.Count -eq 1) { $visionClickStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
         passed = $passed
     }

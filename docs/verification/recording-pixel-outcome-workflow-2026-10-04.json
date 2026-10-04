@@ -1,0 +1,32 @@
+{
+  "executedAt": "2026-10-04T15:58:35.1492886+09:00",
+  "scenario": "pixel-outcome",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook input event + synchronized Windows screen signatures",
+  "sourceVideoSha256": "e09ae19b0185562bd52d81763b4ad3f9e9f3890b525c2ee365fd9cecff6565c1",
+  "stepCount": 1,
+  "action": "click",
+  "evidenceCoverage": 1,
+  "videoEvidenceCoverage": 1,
+  "videoEvidenceFrameCount": 3,
+  "accessibilityOutcomeChanged": false,
+  "visualState": {
+    "id": "visual-state-recorded-2",
+    "sampleWidth": 96,
+    "sampleHeight": 64,
+    "maximumAverageDifference": 49.767857142857146,
+    "minimumPreviousSeparation": 22.11904761904762
+  },
+  "beforeObservation": {
+    "matches": false,
+    "expectedAverageDifference": 110.5952380952381,
+    "previousAverageDifference": 0
+  },
+  "afterObservation": {
+    "matches": true,
+    "expectedAverageDifference": 0,
+    "previousAverageDifference": 110.5952380952381
+  },
+  "runStatus": "SUCCESS",
+  "verification": "success after 1 observation(s)",
+  "passed": true
+}

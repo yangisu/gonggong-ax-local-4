@@ -36,7 +36,7 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo" or "canvas-demo" or "vision-demo" or "vision-ambiguous-demo" or "vision-click-demo";
+        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo" or "canvas-demo" or "vision-demo" or "vision-ambiguous-demo" or "vision-click-demo" or "pixel-outcome-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
@@ -52,13 +52,14 @@ public static class Program
             "vision-duplicate" => CanvasContent(accessible: false, statusId: "vision-status", duplicateShape: true),
             "vision-ambiguous-demo" => CanvasContent(accessible: false, statusId: "vision-ambiguous-status", duplicateShape: true),
             "vision-click" or "vision-click-demo" => VisionClickContent(),
+            "pixel-outcome" or "pixel-outcome-demo" => PixelOutcomeContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
         var window = new Window
         {
             Title = "Semantic Workflow UX Fixture",
-            Width = mode is "canvas" or "vision" or "vision-duplicate" or "vision-click" ? 820 : 640,
+            Width = mode is "canvas" or "vision" or "vision-duplicate" or "vision-click" or "pixel-outcome" or "pixel-outcome-demo" ? 820 : 640,
             Height = mode == "canvas" ? 500 : 420,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             Background = Brushes.White,
@@ -211,11 +212,15 @@ public static class Program
                     });
                     return;
                 }
-                if (mode == "vision-click-demo")
+                if (mode is "vision-click-demo" or "pixel-outcome-demo")
                 {
-                    var shape = FindDescendant<Rectangle>(window)
-                        ?? throw new InvalidOperationException("시각 클릭 대상을 찾지 못했습니다.");
-                    var point = shape.PointToScreen(new Point(shape.ActualWidth / 2, shape.ActualHeight / 2));
+                    FrameworkElement target = mode == "pixel-outcome-demo"
+                        ? FindDescendant<Button>(window)
+                            ?? throw new InvalidOperationException("픽셀 결과 전환 대상을 찾지 못했습니다.")
+                        : FindDescendant<Rectangle>(window)
+                            ?? throw new InvalidOperationException("시각 클릭 대상을 찾지 못했습니다.");
+                    if (mode == "pixel-outcome-demo") target.Focus();
+                    var point = target.PointToScreen(new Point(target.ActualWidth / 2, target.ActualHeight / 2));
                     SetCursorPos((int)Math.Round(point.X), (int)Math.Round(point.Y));
                     await Task.Delay(300);
                     await Task.Run(() =>
@@ -616,6 +621,43 @@ public static class Program
         panel.Children.Add(canvas);
         panel.Children.Add(status);
         return panel;
+    }
+
+    private static UIElement PixelOutcomeContent()
+    {
+        var canvas = new Canvas
+        {
+            Background = Brushes.White,
+        };
+        var trigger = new Button
+        {
+            Width = 90,
+            Height = 62,
+            Content = "표시 전환",
+            Background = Brushes.SteelBlue,
+            Foreground = Brushes.White,
+        };
+        AutomationProperties.SetAutomationId(trigger, "pixel-trigger");
+        AutomationProperties.SetName(trigger, "표시 전환");
+        var indicator = new Rectangle
+        {
+            Width = 150,
+            Height = 90,
+            Fill = Brushes.LightGray,
+        };
+        Canvas.SetLeft(trigger, 120);
+        Canvas.SetTop(trigger, 135);
+        Canvas.SetLeft(indicator, 430);
+        Canvas.SetTop(indicator, 120);
+        trigger.Click += (_, _) =>
+        {
+            indicator.Fill = ReferenceEquals(indicator.Fill, Brushes.ForestGreen)
+                ? Brushes.LightGray
+                : Brushes.ForestGreen;
+        };
+        canvas.Children.Add(trigger);
+        canvas.Children.Add(indicator);
+        return canvas;
     }
 
     private static StackPanel Panel(string heading)

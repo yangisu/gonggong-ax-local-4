@@ -136,6 +136,53 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void PixelOnlyOutcome_BecomesAVerifiableStateAndCanBeSkippedWhenAlreadyComplete()
+    {
+        WithVideo(video =>
+        {
+            var beforePixels = Enumerable.Repeat((byte)220, 16 * 16).ToArray();
+            var afterPixels = beforePixels.ToArray();
+            for (var y = 5; y < 11; y++)
+            for (var x = 5; x < 11; x++)
+                afterPixels[y * 16 + x] = 45;
+            var beforeSignature = new SemanticVisualSignature(1, 16, 16, Convert.ToBase64String(beforePixels));
+            var afterSignature = new SemanticVisualSignature(1, 16, 16, Convert.ToBase64String(afterPixels));
+            var target = Element("Button", "표시 전환", "toggle-display");
+            var before = Frame("pixel-before", .3, target) with { VisualSignature = beforeSignature };
+            var after = Frame("pixel-after", .8, target) with { VisualSignature = afterSignature };
+            var demonstration = new SemanticDemonstration(
+                "화면의 표시를 전환해 줘", video, 1.2,
+                [new(0, .5, "MouseLeftClick")],
+                [before, after],
+                [new("toggle-pixels", 0, .5, "click", Selector("Button", "표시 전환", "toggle-display"), null,
+                    "pixel-before", "pixel-after")]);
+
+            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var visual = Assert.Single(workflow.Steps[0].SuccessCondition.RequiredVisualStates!);
+            Assert.True(visual.TryDecodeMask(out var mask));
+            Assert.True(mask.Count(value => value != 0) >= 12);
+
+            var surface = new ExperienceSurface(demonstration.Frames, demonstration.Actions);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal(["toggle-pixels"], surface.ExecutedSteps);
+            Assert.Contains("visualStates", result.Journal[^1].Observation);
+
+            var completed = new ExperienceSurface(demonstration.Frames, demonstration.Actions, initialState: 1);
+            var skipped = new SemanticWorkflowRunner().Run(workflow, completed, verificationDelay: TimeSpan.Zero);
+            Assert.Equal("SUCCESS", skipped.Status);
+            Assert.Empty(completed.ExecutedSteps);
+
+            var unchanged = new ExperienceSurface(
+                demonstration.Frames, demonstration.Actions, advanceOnExecute: false);
+            var rejected = new SemanticWorkflowRunner().Run(
+                workflow, unchanged, verificationAttempts: 1, verificationDelay: TimeSpan.Zero);
+            Assert.Equal("VERIFICATION_FAILED", rejected.Status);
+            Assert.Contains("ExpectedAverageDifference", rejected.Journal[^1].Observation);
+        });
+    }
+
+    [Fact]
     public void CompilerRejectsAFileThatIsNotAnMp4Recording()
     {
         var video = Path.GetTempFileName();
@@ -954,26 +1001,30 @@ public sealed class SemanticWorkflowExperienceTests
         finally { File.Delete(video); }
     }
 
-    private sealed class ExperienceSurface : ISemanticWorkflowSurface
+    private sealed class ExperienceSurface : ISemanticWorkflowSurface, ISemanticVisualWorkflowSurface
     {
         private readonly IReadOnlyList<SemanticDemonstrationFrame> frames;
         private readonly IReadOnlyList<SemanticDemonstrationAction> actions;
         private readonly bool reverseElements;
         private readonly bool duplicateTarget;
+        private readonly bool advanceOnExecute;
         private int state;
         private long revision;
+        private IReadOnlyList<SemanticVisualStateRequirement> visualRequirements = [];
 
         internal ExperienceSurface(
             IReadOnlyList<SemanticDemonstrationFrame> frames,
             IReadOnlyList<SemanticDemonstrationAction> actions,
             bool reverseElements = false,
             int initialState = 0,
-            bool duplicateTarget = false)
+            bool duplicateTarget = false,
+            bool advanceOnExecute = true)
         {
             this.frames = frames;
             this.actions = actions;
             this.reverseElements = reverseElements;
             this.duplicateTarget = duplicateTarget;
+            this.advanceOnExecute = advanceOnExecute;
             state = initialState;
         }
 
@@ -994,8 +1045,16 @@ public sealed class SemanticWorkflowExperienceTests
                 elements.Add(original with { Id = original.Id + "-duplicate" });
             }
             if (reverseElements) elements.Reverse();
-            return new SemanticWorkflowObservation(frame.ProcessName, frame.WindowTitle, frame.Url, elements, revision);
+            var visualStates = visualRequirements.ToDictionary(
+                requirement => requirement.Id,
+                requirement => SemanticWorkflowCompiler.EvaluateVisualState(frame.VisualSignature, requirement),
+                StringComparer.Ordinal);
+            return new SemanticWorkflowObservation(
+                frame.ProcessName, frame.WindowTitle, frame.Url, elements, revision, visualStates);
         }
+
+        public void ConfigureVisualStates(IReadOnlyList<SemanticVisualStateRequirement> requirements) =>
+            visualRequirements = requirements;
 
         public void Execute(SemanticPlannedAction action, SemanticWorkflowObservation observation)
         {
@@ -1011,7 +1070,7 @@ public sealed class SemanticWorkflowExperienceTests
                 throw new InvalidOperationException("wrong or stale target");
             }
             ExecutedSteps.Add(action.StepId);
-            state++;
+            if (advanceOnExecute) state++;
             revision++;
         }
     }

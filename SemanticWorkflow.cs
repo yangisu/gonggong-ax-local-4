@@ -39,6 +39,51 @@ public sealed record SemanticVisualAnchor(
     }
 }
 
+public sealed record SemanticVisualSignature(
+    int Version,
+    int Width,
+    int Height,
+    string GrayBase64)
+{
+    public bool TryDecode(out byte[] samples)
+    {
+        samples = [];
+        if (Version != 1 || Width is < 16 or > 256 || Height is < 16 or > 256)
+            return false;
+        try { samples = Convert.FromBase64String(GrayBase64); }
+        catch (FormatException) { return false; }
+        return samples.Length == Width * Height;
+    }
+}
+
+public sealed record SemanticVisualStateRequirement(
+    string Id,
+    SemanticVisualSignature Expected,
+    SemanticVisualSignature Previous,
+    string DifferenceMaskBase64,
+    double MaximumAverageDifference = 18,
+    double MinimumPreviousSeparation = 4)
+{
+    public bool TryDecodeMask(out byte[] mask)
+    {
+        mask = [];
+        if (!Expected.TryDecode(out var expected)
+            || !Previous.TryDecode(out var previous)
+            || Expected.Width != Previous.Width
+            || Expected.Height != Previous.Height
+            || expected.Length != previous.Length)
+            return false;
+        try { mask = Convert.FromBase64String(DifferenceMaskBase64); }
+        catch (FormatException) { return false; }
+        return mask.Length == expected.Length && mask.Count(value => value != 0) >= 12;
+    }
+}
+
+public sealed record SemanticVisualStateObservation(
+    bool Matches,
+    double ExpectedAverageDifference,
+    double PreviousAverageDifference);
+
 public sealed record SemanticBounds(double Left, double Top, double Right, double Bottom)
 {
     public double Width => Right - Left;
@@ -72,7 +117,8 @@ public sealed record SemanticDemonstrationFrame(
     string WindowTitle,
     string Url,
     IReadOnlyList<SemanticElementEvidence> Elements,
-    string? VideoFrameSha256 = null);
+    string? VideoFrameSha256 = null,
+    SemanticVisualSignature? VisualSignature = null);
 
 public sealed record SemanticDemonstrationAction(
     string Id,
@@ -99,7 +145,8 @@ public sealed record SemanticStatePredicate(
     string? WindowTitle,
     string? UrlOrigin,
     string? UrlPathPrefix,
-    IReadOnlyList<SemanticTargetSelector> RequiredElements)
+    IReadOnlyList<SemanticTargetSelector> RequiredElements,
+    IReadOnlyList<SemanticVisualStateRequirement>? RequiredVisualStates = null)
 {
     public bool Matches(SemanticWorkflowObservation observation)
     {
@@ -108,7 +155,12 @@ public sealed record SemanticStatePredicate(
             && !string.Equals(WindowTitle.Trim(), observation.WindowTitle.Trim(), StringComparison.OrdinalIgnoreCase))
             return false;
         if (!MatchesUrl(observation.Url)) return false;
-        return RequiredElements.All(selector => SemanticWorkflowMatching.Find(observation, selector).Count == 1);
+        if (!RequiredElements.All(selector => SemanticWorkflowMatching.Find(observation, selector).Count == 1))
+            return false;
+        return (RequiredVisualStates ?? []).All(requirement =>
+            observation.VisualStates is not null
+            && observation.VisualStates.TryGetValue(requirement.Id, out var state)
+            && state.Matches);
     }
 
     private bool MatchesUrl(string candidate)
@@ -457,6 +509,8 @@ public static class SemanticWorkflowCompiler
             var before = frameById[action.BeforeFrameId][0];
             var after = frameById[action.AfterFrameId][0];
             var precondition = BuildPredicate(before, previous: null, requiredTarget: action.Target);
+            if (index > 0 && steps[^1].SuccessCondition.RequiredVisualStates is { Count: > 0 } priorVisualStates)
+                precondition = precondition with { RequiredVisualStates = priorVisualStates };
             var nextTarget = index + 1 < demonstration.Actions.Count ? demonstration.Actions[index + 1].Target : null;
             var successTarget = action.Kind.Equals("reorder-item", StringComparison.OrdinalIgnoreCase)
                 && SemanticOrdinalValue.TryParse(action.Value, out var finalOrdinal)
@@ -467,6 +521,9 @@ public static class SemanticWorkflowCompiler
                 before,
                 successTarget,
                 action.Kind.Equals("scroll", StringComparison.OrdinalIgnoreCase) ? action.Target : null);
+            if (!Distinguishes(success, before)
+                && TryBuildVisualStateRequirement(action.Id, before, after, out var visualRequirement))
+                success = success with { RequiredVisualStates = [visualRequirement] };
             if (!Distinguishes(success, before))
                 throw new InvalidOperationException($"단계 {action.Id} 이후의 의미 상태를 이전 상태와 구분할 근거가 없습니다.");
             steps.Add(new SemanticWorkflowStepDefinition(
@@ -547,14 +604,89 @@ public static class SemanticWorkflowCompiler
 
     private static bool Distinguishes(SemanticStatePredicate predicate, SemanticDemonstrationFrame previous)
     {
+        var visualStates = (predicate.RequiredVisualStates ?? []).ToDictionary(
+            requirement => requirement.Id,
+            requirement => EvaluateVisualState(previous.VisualSignature, requirement),
+            StringComparer.Ordinal);
         var observation = new SemanticWorkflowObservation(
             previous.ProcessName,
             previous.WindowTitle,
             previous.Url,
             previous.Elements.Select((element, index) => new SemanticWorkflowElement(
                 $"previous-{index}", element.Role, element.Name, element.AutomationId, element.Value,
-                element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToArray(), 0);
+                element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToArray(), 0,
+            visualStates);
         return !predicate.Matches(observation);
+    }
+
+    private static bool TryBuildVisualStateRequirement(
+        string actionId,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        out SemanticVisualStateRequirement requirement)
+    {
+        requirement = null!;
+        if (before.VisualSignature is not { } previous
+            || after.VisualSignature is not { } expected
+            || !previous.TryDecode(out var previousPixels)
+            || !expected.TryDecode(out var expectedPixels)
+            || previous.Width != expected.Width
+            || previous.Height != expected.Height)
+            return false;
+
+        var mask = new byte[expectedPixels.Length];
+        var changed = 0;
+        for (var index = 0; index < mask.Length; index++)
+        {
+            if (Math.Abs(expectedPixels[index] - previousPixels[index]) < 12) continue;
+            mask[index] = 1;
+            changed++;
+        }
+        if (changed < 12) return false;
+        var separation = MaskedAverageDifference(expectedPixels, previousPixels, mask);
+        if (separation < 8) return false;
+        requirement = new SemanticVisualStateRequirement(
+            $"visual-state-{actionId}",
+            expected,
+            previous,
+            Convert.ToBase64String(mask),
+            MaximumAverageDifference: Math.Max(18, separation * 0.45),
+            MinimumPreviousSeparation: Math.Max(4, separation * 0.2));
+        return true;
+    }
+
+    public static SemanticVisualStateObservation EvaluateVisualState(
+        SemanticVisualSignature? current,
+        SemanticVisualStateRequirement requirement)
+    {
+        if (current is null
+            || !current.TryDecode(out var currentPixels)
+            || !requirement.TryDecodeMask(out var mask)
+            || !requirement.Expected.TryDecode(out var expectedPixels)
+            || !requirement.Previous.TryDecode(out var previousPixels)
+            || current.Width != requirement.Expected.Width
+            || current.Height != requirement.Expected.Height)
+            return new SemanticVisualStateObservation(false, double.PositiveInfinity, double.PositiveInfinity);
+        var expectedDifference = MaskedAverageDifference(currentPixels, expectedPixels, mask);
+        var previousDifference = MaskedAverageDifference(currentPixels, previousPixels, mask);
+        return new SemanticVisualStateObservation(
+            expectedDifference <= requirement.MaximumAverageDifference
+                && previousDifference - expectedDifference >= requirement.MinimumPreviousSeparation,
+            expectedDifference,
+            previousDifference);
+    }
+
+    private static double MaskedAverageDifference(byte[] left, byte[] right, byte[] mask)
+    {
+        long total = 0;
+        var count = 0;
+        for (var index = 0; index < mask.Length; index++)
+        {
+            if (mask[index] == 0) continue;
+            total += Math.Abs(left[index] - right[index]);
+            count++;
+        }
+        return count == 0 ? double.PositiveInfinity : (double)total / count;
     }
 
     private static (string? Origin, string? Path) UrlScope(string current, string? previous)
@@ -617,7 +749,8 @@ public sealed record SemanticWorkflowObservation(
     string WindowTitle,
     string Url,
     IReadOnlyList<SemanticWorkflowElement> Elements,
-    long Revision);
+    long Revision,
+    IReadOnlyDictionary<string, SemanticVisualStateObservation>? VisualStates = null);
 
 public static class SemanticWorkflowMatching
 {
@@ -647,6 +780,11 @@ public interface ISemanticWorkflowSurface
 {
     SemanticWorkflowObservation Observe();
     void Execute(SemanticPlannedAction action, SemanticWorkflowObservation observation);
+}
+
+public interface ISemanticVisualWorkflowSurface
+{
+    void ConfigureVisualStates(IReadOnlyList<SemanticVisualStateRequirement> requirements);
 }
 
 public sealed record SemanticWorkflowJournalEntry(
@@ -682,6 +820,17 @@ public sealed class SemanticWorkflowRunner
         if (verificationAttempts is < 1 or > 40) throw new ArgumentOutOfRangeException(nameof(verificationAttempts));
         var delay = verificationDelay ?? TimeSpan.FromMilliseconds(250);
         var journal = new List<SemanticWorkflowJournalEntry>();
+
+        if (surface is ISemanticVisualWorkflowSurface visualSurface)
+        {
+            var visualRequirements = workflow.Steps
+                .SelectMany(step => (step.Precondition.RequiredVisualStates ?? [])
+                    .Concat(step.SuccessCondition.RequiredVisualStates ?? []))
+                .GroupBy(requirement => requirement.Id, StringComparer.Ordinal)
+                .Select(group => group.First())
+                .ToArray();
+            visualSurface.ConfigureVisualStates(visualRequirements);
+        }
 
         for (var transition = 0; transition <= workflow.Steps.Count; transition++)
         {
@@ -795,6 +944,7 @@ public sealed class SemanticWorkflowRunner
                 observation.Url,
                 observation.Revision,
                 elementCount = observation.Elements.Count,
+                visualStates = observation.VisualStates,
             }),
             candidates.Select(candidate => candidate.Id).ToArray(),
             decision, execution, verification);
