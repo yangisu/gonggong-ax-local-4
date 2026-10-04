@@ -14,6 +14,21 @@ public sealed record SemanticTargetSelector(
     string? ExpectedValue = null,
     bool RequireKeyboardFocus = false);
 
+public sealed record SemanticBounds(double Left, double Top, double Right, double Bottom)
+{
+    public double Width => Right - Left;
+
+    public double Height => Bottom - Top;
+
+    public bool IsUsable =>
+        double.IsFinite(Left)
+        && double.IsFinite(Top)
+        && double.IsFinite(Right)
+        && double.IsFinite(Bottom)
+        && Width > 1
+        && Height > 1;
+}
+
 public sealed record SemanticElementEvidence(
     string Role,
     string Name,
@@ -22,7 +37,8 @@ public sealed record SemanticElementEvidence(
     bool Enabled = true,
     bool Offscreen = false,
     bool Password = false,
-    bool KeyboardFocused = false);
+    bool KeyboardFocused = false,
+    SemanticBounds? Bounds = null);
 
 public sealed record SemanticDemonstrationFrame(
     string Id,
@@ -141,6 +157,55 @@ public static class SemanticOrdinalValue
     public static string FormatEvidence(int ordinal) => $"ordinal={Format(ordinal)}";
 }
 
+public sealed record SemanticRelativeDrag(double StartX, double StartY, double EndX, double EndY)
+{
+    private const double MinimumCoordinate = 0.01;
+    private const double MaximumCoordinate = 0.99;
+
+    public static bool TryParse(string? value, out SemanticRelativeDrag drag)
+    {
+        drag = new SemanticRelativeDrag(0, 0, 0, 0);
+        var parts = value?.Split(',', StringSplitOptions.TrimEntries) ?? [];
+        if (parts.Length != 4
+            || !double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var startX)
+            || !double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var startY)
+            || !double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var endX)
+            || !double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out var endY))
+            return false;
+        var values = new[] { startX, startY, endX, endY };
+        if (values.Any(item => !double.IsFinite(item) || item is < MinimumCoordinate or > MaximumCoordinate))
+            return false;
+        if (Math.Sqrt(Math.Pow(endX - startX, 2) + Math.Pow(endY - startY, 2)) < 0.05)
+            return false;
+        drag = new SemanticRelativeDrag(startX, startY, endX, endY);
+        return true;
+    }
+
+    public override string ToString() => string.Join(',',
+        StartX.ToString("0.######", CultureInfo.InvariantCulture),
+        StartY.ToString("0.######", CultureInfo.InvariantCulture),
+        EndX.ToString("0.######", CultureInfo.InvariantCulture),
+        EndY.ToString("0.######", CultureInfo.InvariantCulture));
+
+    public static bool TryCreate(
+        SemanticBounds bounds,
+        double screenStartX,
+        double screenStartY,
+        double screenEndX,
+        double screenEndY,
+        out SemanticRelativeDrag drag)
+    {
+        drag = new SemanticRelativeDrag(0, 0, 0, 0);
+        if (!bounds.IsUsable) return false;
+        var candidate = new SemanticRelativeDrag(
+            (screenStartX - bounds.Left) / bounds.Width,
+            (screenStartY - bounds.Top) / bounds.Height,
+            (screenEndX - bounds.Left) / bounds.Width,
+            (screenEndY - bounds.Top) / bounds.Height);
+        return TryParse(candidate.ToString(), out drag);
+    }
+}
+
 public sealed record SemanticWorkflowStepDefinition(
     string Id,
     string FromStateId,
@@ -215,7 +280,7 @@ public static class SemanticWorkflowCompiler
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus", "reorder-item",
+        "click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus", "reorder-item", "drag-within",
     };
 
     private static readonly string[] IrreversibleTerms =
@@ -267,6 +332,8 @@ public static class SemanticWorkflowCompiler
                 throw new InvalidOperationException($"단계 {action.Id}의 범위 조절 값이 올바르지 않습니다.");
             if (action.Kind == "reorder-item" && !SemanticOrdinalValue.TryParse(action.Value, out _))
                 throw new InvalidOperationException($"단계 {action.Id}의 목록 순서 값이 올바르지 않습니다.");
+            if (action.Kind == "drag-within" && !SemanticRelativeDrag.TryParse(action.Value, out _))
+                throw new InvalidOperationException($"단계 {action.Id}의 작업 영역 드래그 값이 올바르지 않습니다.");
             if (!frameById.TryGetValue(action.BeforeFrameId, out var beforeItems)
                 || !frameById.TryGetValue(action.AfterFrameId, out var afterItems))
                 throw new InvalidOperationException($"단계 {action.Id}가 존재하지 않는 화면 증거를 참조합니다.");
@@ -477,7 +544,8 @@ public sealed record SemanticWorkflowElement(
     bool Enabled,
     bool Offscreen,
     bool Password,
-    bool KeyboardFocused = false);
+    bool KeyboardFocused = false,
+    SemanticBounds? Bounds = null);
 
 public sealed record SemanticWorkflowObservation(
     string ProcessName,

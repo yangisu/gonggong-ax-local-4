@@ -74,7 +74,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 element.Enabled,
                 element.Offscreen,
                 element.Password,
-                element.KeyboardFocused)).ToArray());
+                element.KeyboardFocused,
+                element.Bounds)).ToArray());
         return (frame, target);
     }
 
@@ -288,6 +289,11 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                     throw new InvalidOperationException("목록 순서 값이 올바르지 않습니다.");
                 ReorderListItem(element, ordinal);
                 break;
+            case "drag-within":
+                if (!SemanticRelativeDrag.TryParse(action.Value, out var drag))
+                    throw new InvalidOperationException("작업 영역 드래그 값이 올바르지 않습니다.");
+                DragWithin(element, drag);
+                break;
             default:
                 throw new InvalidOperationException($"지원하지 않는 의미 동작입니다: {action.Kind}");
         }
@@ -333,7 +339,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 element.Enabled,
                 element.Offscreen,
                 element.Password,
-                element.KeyboardFocused)).ToArray());
+                element.KeyboardFocused,
+                element.Bounds)).ToArray());
 
     private static AutomationElement ForegroundRoot()
     {
@@ -399,10 +406,12 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         var runtime = RuntimeIdentity(element);
         var idSource = $"{runtime}|{role}|{name}|{automationId}";
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(idSource))).ToLowerInvariant()[..24];
+        var rectangle = element.Current.BoundingRectangle;
         return new SemanticWorkflowElement(
             id, role, name, automationId, ReadValue(element),
             element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword,
-            focusedRuntimeId is not null && string.Equals(runtime, focusedRuntimeId, StringComparison.Ordinal));
+            focusedRuntimeId is not null && string.Equals(runtime, focusedRuntimeId, StringComparison.Ordinal),
+            new SemanticBounds(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom));
     }
 
     private static string RuntimeIdentity(AutomationElement element) =>
@@ -553,6 +562,35 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 var y = startY + (endY - startY) * step / 10;
                 if (!SetCursorPos(x, y))
                     throw new InvalidOperationException("목록 재정렬 경로로 마우스 포인터를 이동하지 못했습니다.");
+                Thread.Sleep(25);
+            }
+        }
+        finally
+        {
+            mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+        }
+    }
+
+    private static void DragWithin(AutomationElement element, SemanticRelativeDrag drag)
+    {
+        var bounds = element.Current.BoundingRectangle;
+        if (bounds.IsEmpty || bounds.Width <= 1 || bounds.Height <= 1)
+            throw new InvalidOperationException("TARGET_MISMATCH: 작업 영역 경계를 확인할 수 없습니다.");
+        var startX = checked((int)Math.Round(bounds.Left + bounds.Width * drag.StartX));
+        var startY = checked((int)Math.Round(bounds.Top + bounds.Height * drag.StartY));
+        var endX = checked((int)Math.Round(bounds.Left + bounds.Width * drag.EndX));
+        var endY = checked((int)Math.Round(bounds.Top + bounds.Height * drag.EndY));
+        if (!SetCursorPos(startX, startY))
+            throw new InvalidOperationException("작업 영역의 시작점으로 마우스 포인터를 이동하지 못했습니다.");
+        mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
+        try
+        {
+            for (var step = 1; step <= 12; step++)
+            {
+                var x = startX + (endX - startX) * step / 12;
+                var y = startY + (endY - startY) * step / 12;
+                if (!SetCursorPos(x, y))
+                    throw new InvalidOperationException("작업 영역 드래그 경로로 마우스 포인터를 이동하지 못했습니다.");
                 Thread.Sleep(25);
             }
         }

@@ -7,6 +7,8 @@ using System.Windows.Interop;
 using System.Runtime.InteropServices;
 using System.Collections.ObjectModel;
 using System.Windows.Input;
+using System.Windows.Shapes;
+using System.Windows.Automation.Peers;
 
 namespace SemanticWorkflowFixture;
 
@@ -34,7 +36,7 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo";
+        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo" or "canvas-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
@@ -45,14 +47,15 @@ public static class Program
             "focus" or "focus-demo" => FocusContent(),
             "korean" or "korean-demo" => KoreanEditorContent(),
             "reorder" or "reorder-demo" => ReorderContent(),
+            "canvas" or "canvas-demo" => CanvasContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
         var window = new Window
         {
             Title = "Semantic Workflow UX Fixture",
-            Width = 640,
-            Height = 420,
+            Width = mode == "canvas" ? 820 : 640,
+            Height = mode == "canvas" ? 500 : 420,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
             Background = Brushes.White,
             Content = content,
@@ -172,6 +175,31 @@ public static class Program
                         {
                             var x = start.X + (end.X - start.X) * step / 10;
                             var y = start.Y + (end.Y - start.Y) * step / 10;
+                            SetCursorPos((int)Math.Round(x), (int)Math.Round(y));
+                            Thread.Sleep(40);
+                        }
+                        mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero);
+                    });
+                    return;
+                }
+                if (mode == "canvas-demo")
+                {
+                    var canvas = FindDescendant<Canvas>(window)
+                        ?? throw new InvalidOperationException("작업 영역을 찾지 못했습니다.");
+                    canvas.UpdateLayout();
+                    var shape = FindDescendant<Rectangle>(canvas)
+                        ?? throw new InvalidOperationException("이동할 도형을 찾지 못했습니다.");
+                    var start = shape.PointToScreen(new Point(shape.ActualWidth / 2, shape.ActualHeight / 2));
+                    var end = canvas.PointToScreen(new Point(canvas.ActualWidth * .75, canvas.ActualHeight / 2));
+                    SetCursorPos((int)Math.Round(start.X), (int)Math.Round(start.Y));
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero);
+                        for (var step = 1; step <= 12; step++)
+                        {
+                            var x = start.X + (end.X - start.X) * step / 12;
+                            var y = start.Y + (end.Y - start.Y) * step / 12;
                             SetCursorPos((int)Math.Round(x), (int)Math.Round(y));
                             Thread.Sleep(40);
                         }
@@ -474,6 +502,49 @@ public static class Program
         return panel;
     }
 
+    private static UIElement CanvasContent()
+    {
+        var panel = Panel("도형 배치");
+        var status = Named(new TextBlock { Text = "도형 위치: 왼쪽", FontSize = 18 },
+            "canvas-status", "도형 위치: 왼쪽");
+        var canvas = Named(new AccessibleCanvas
+        {
+            Height = 180,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Background = Brushes.Gainsboro,
+        }, "shape-canvas", "도형 작업 영역");
+        var shape = new Rectangle
+        {
+            Width = 50,
+            Height = 50,
+            Fill = Brushes.SteelBlue,
+        };
+        Canvas.SetTop(shape, 65);
+        canvas.Children.Add(shape);
+        canvas.SizeChanged += (_, _) =>
+        {
+            if (!shape.IsMouseCaptured && status.Text == "도형 위치: 왼쪽")
+                Canvas.SetLeft(shape, Math.Max(8, canvas.ActualWidth * .15 - shape.Width / 2));
+        };
+        shape.MouseLeftButtonDown += (_, args) =>
+        {
+            shape.CaptureMouse();
+            args.Handled = true;
+        };
+        shape.MouseLeftButtonUp += (_, args) =>
+        {
+            var point = args.GetPosition(canvas);
+            Canvas.SetLeft(shape, Math.Clamp(point.X - shape.Width / 2, 0, Math.Max(0, canvas.ActualWidth - shape.Width)));
+            shape.ReleaseMouseCapture();
+            status.Text = point.X >= canvas.ActualWidth / 2 ? "도형 위치: 오른쪽" : "도형 위치: 왼쪽";
+            AutomationProperties.SetName(status, status.Text);
+            args.Handled = true;
+        };
+        panel.Children.Add(canvas);
+        panel.Children.Add(status);
+        return panel;
+    }
+
     private static StackPanel Panel(string heading)
     {
         var panel = new StackPanel { Margin = new Thickness(42) };
@@ -494,4 +565,16 @@ public static class Program
         if (element is FrameworkElement framework) framework.Margin = new Thickness(0, 0, 0, 20);
         return element;
     }
+}
+
+internal sealed class AccessibleCanvas : Canvas
+{
+    protected override AutomationPeer OnCreateAutomationPeer() => new AccessibleCanvasPeer(this);
+}
+
+internal sealed class AccessibleCanvasPeer(AccessibleCanvas owner) : FrameworkElementAutomationPeer(owner)
+{
+    protected override string GetClassNameCore() => "Canvas";
+
+    protected override AutomationControlType GetAutomationControlTypeCore() => AutomationControlType.Pane;
 }

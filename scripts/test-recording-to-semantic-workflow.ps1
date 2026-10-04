@@ -2,7 +2,7 @@ param(
     [string]$OutputDirectory = "artifacts/recording-to-semantic-workflow",
     [string]$EnginePath = "",
     [string]$FixturePath = "",
-    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus", "reorder")]
+    [ValidateSet("text", "korean", "scroll", "keyboard", "slider", "selection", "focus", "reorder", "canvas")]
     [string]$Scenario = "text"
 )
 
@@ -74,6 +74,7 @@ try {
         "focus" { "focus-demo" }
         "korean" { "korean-demo" }
         "reorder" { "reorder-demo" }
+        "canvas" { "canvas-demo" }
         default { "editor-demo" }
     }
     $intent = switch ($Scenario) {
@@ -84,6 +85,7 @@ try {
         "focus" { "Tab으로 검색 버튼까지 이동해 줘" }
         "korean" { "메모에 회의록이라고 입력해 줘" }
         "reorder" { "업무 B를 목록 마지막으로 이동해 줘" }
+        "canvas" { "도형을 작업 영역 오른쪽으로 이동해 줘" }
         default { "새 메모를 만들고 meeting을 입력해 줘" }
     }
     $expectedAction = switch ($Scenario) {
@@ -93,6 +95,7 @@ try {
         "selection" { "select-option" }
         "focus" { "focus" }
         "reorder" { "reorder-item" }
+        "canvas" { "drag-within" }
         default { "type" }
     }
     $demonstration = Start-Process -FilePath $FixturePath -ArgumentList $demonstrationMode -PassThru
@@ -132,6 +135,7 @@ try {
         "focus" { "focus" }
         "korean" { "korean" }
         "reorder" { "reorder" }
+        "canvas" { "canvas" }
         default { "editor" }
     }
     $replay = Start-Process -FilePath $FixturePath -ArgumentList $replayMode -PassThru
@@ -157,6 +161,7 @@ try {
     $focusStatus = @($observed.elements | Where-Object { $_.automation_id -eq "focus-status" -and $_.name -eq "포커스: 검색" })
     $reordered = @($observed.elements | Where-Object { $_.role -eq "ListItem" -and $_.name -eq "업무 B" -and $_.value -eq "ordinal=3" })
     $reorderStatus = @($observed.elements | Where-Object { $_.automation_id -eq "priority-status" -and $_.name -eq "순서: A,C,D,B" })
+    $canvasStatus = @($observed.elements | Where-Object { $_.automation_id -eq "canvas-status" -and $_.name -eq "도형 위치: 오른쪽" })
     $outcomeVisible = switch ($Scenario) {
         "scroll" { $scrolled.Count -eq 1 }
         "keyboard" { $toggled.Count -eq 1 -and $darkStatus.Count -eq 1 }
@@ -164,6 +169,7 @@ try {
         "selection" { $selected.Count -eq 1 -and $selectionStatus.Count -eq 1 }
         "focus" { $focused.Count -eq 1 -and $focusStatus.Count -eq 1 }
         "reorder" { $reordered.Count -eq 1 -and $reorderStatus.Count -eq 1 }
+        "canvas" { $canvasStatus.Count -eq 1 }
         default { $editor.Count -eq 1 -and $saved.Count -eq 1 }
     }
     $passed = $run.Status -eq "SUCCESS" -and $outcomeVisible
@@ -180,8 +186,8 @@ try {
         videoEvidenceFrameCount = @($workflowDocument.videoEvidence).Count
         runStatus = $run.Status
         visibleEditorValue = if ($editor.Count -eq 1) { $editor[0].value } else { $null }
-        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } elseif ($reordered.Count -eq 1) { $reordered[0].value } else { $null }
-        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($Scenario -eq "focus" -and $focusStatus.Count -eq 1) { $focusStatus[0].name } elseif ($Scenario -eq "reorder" -and $reorderStatus.Count -eq 1) { $reorderStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
+        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } elseif ($reordered.Count -eq 1) { $reordered[0].value } elseif ($canvasStatus.Count -eq 1) { "relative-surface-drag" } else { $null }
+        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($Scenario -eq "focus" -and $focusStatus.Count -eq 1) { $focusStatus[0].name } elseif ($Scenario -eq "reorder" -and $reorderStatus.Count -eq 1) { $reorderStatus[0].name } elseif ($Scenario -eq "canvas" -and $canvasStatus.Count -eq 1) { $canvasStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
         passed = $passed
     }
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")

@@ -285,10 +285,30 @@ public static class RecordedSemanticWorkflowExtractor
                         current.Event.SemanticBefore!,
                         after));
                 }
+                else if (current.Event.SemanticTarget.Roles.Any(role => role is "Pane" or "Custom"))
+                {
+                    RequireSurfaceDragEvidence(current.Event);
+                    var bounds = TargetElement(current.Event.SemanticBefore!, current.Event.SemanticTarget).Bounds!;
+                    if (!SemanticRelativeDrag.TryCreate(
+                        bounds,
+                        current.Event.ScreenX!.Value,
+                        current.Event.ScreenY!.Value,
+                        current.Event.EndScreenX!.Value,
+                        current.Event.EndScreenY!.Value,
+                        out var drag))
+                        throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 작업 영역 내부 드래그를 정규화할 수 없습니다.");
+                    units.Add(new ExtractedUnit(
+                        [current],
+                        "drag-within",
+                        current.Event.SemanticTarget,
+                        drag.ToString(),
+                        current.Event.SemanticBefore!,
+                        after));
+                }
                 else
                 {
                     throw new InvalidOperationException(
-                        $"이벤트 {current.Event.Sequence}는 의미 값이 있는 슬라이더 또는 목록 재정렬 드래그가 아닙니다.");
+                        $"이벤트 {current.Event.Sequence}는 의미 값이 있는 슬라이더, 목록 재정렬 또는 검증 가능한 작업 영역 드래그가 아닙니다.");
                 }
                 index++;
                 continue;
@@ -518,6 +538,23 @@ public static class RecordedSemanticWorkflowExtractor
             throw new InvalidOperationException($"이벤트 {item.Sequence}는 의미 목록 항목 재정렬 드래그가 아닙니다.");
     }
 
+    private static void RequireSurfaceDragEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 작업 영역 드래그 전후 의미 증거가 없습니다.");
+        if (item.DragButton != MouseButton.Button1)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 작업 영역 조작은 왼쪽 버튼 드래그만 지원합니다.");
+        if (item.ModifierKeyCodes.Length > 0)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 드래그는 자동 변환하지 않습니다.");
+        if (item.ScreenX is null || item.ScreenY is null || item.EndScreenX is null || item.EndScreenY is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 작업 영역 드래그 시작점 또는 끝점이 없습니다.");
+        if (!item.SemanticTarget.Roles.Any(role => role is "Pane" or "Custom"))
+            throw new InvalidOperationException($"이벤트 {item.Sequence}는 고유한 작업 영역 내부 드래그가 아닙니다.");
+        var target = TargetElement(item.SemanticBefore, item.SemanticTarget);
+        if (target.Bounds is not { IsUsable: true })
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 작업 영역 경계 증거가 없습니다.");
+    }
+
     private static bool SameTextTarget(RecordedEvent first, RecordedEvent second) =>
         first.SemanticTarget is not null
         && second.SemanticTarget is not null
@@ -558,6 +595,22 @@ public static class RecordedSemanticWorkflowExtractor
             && (string.IsNullOrWhiteSpace(target.AutomationId)
                 || string.Equals(target.AutomationId, element.AutomationId, StringComparison.Ordinal))).Take(2).ToArray();
         return matches.Length == 1 ? matches[0].Value : null;
+    }
+
+    private static SemanticElementEvidence TargetElement(
+        SemanticDemonstrationFrame frame,
+        SemanticTargetSelector target)
+    {
+        var matches = frame.Elements.Where(element =>
+            target.Roles.Any(role => string.Equals(role, element.Role, StringComparison.OrdinalIgnoreCase))
+            && string.Equals(target.Name.Trim(), element.Name.Trim(), StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(target.AutomationId)
+                || string.Equals(target.AutomationId, element.AutomationId, StringComparison.Ordinal)))
+            .Take(2)
+            .ToArray();
+        return matches.Length == 1
+            ? matches[0]
+            : throw new InvalidOperationException("드래그 작업 영역의 의미 증거가 정확히 하나가 아닙니다.");
     }
 
     private static bool SensitiveTarget(string name) => new[]

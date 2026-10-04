@@ -458,23 +458,94 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
-    public void CanvasDragWithoutASemanticRangeValue_IsRejected()
+    public void RecordedSurfaceDrag_BecomesARelativeGestureWithSemanticOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Pane", "도형 작업 영역", "shape-canvas");
+            var bounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("canvas-before", .3,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "canvas-status"));
+            var after = Frame("canvas-after", .8,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "canvas-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 180;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 400;
+            recorded.EndScreenY = 200;
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "도형을 작업 영역 오른쪽으로 이동해 줘",
+                video,
+                1.2,
+                [recorded],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("drag-within", step.Action.Kind);
+            Assert.Equal("0.2,0.5,0.75,0.5", step.Action.Value);
+            Assert.DoesNotContain("100", step.Action.Value);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "도형 위치: 오른쪽");
+        });
+    }
+
+    [Fact]
+    public void CanvasDragWithoutASemanticOutcome_IsRejected()
     {
         WithVideo(video =>
         {
             var target = Selector("Pane", "그리기 영역", "canvas");
-            var before = Frame("canvas-before", .3, Element("Pane", "그리기 영역", "canvas"));
-            var after = Frame("canvas-after", .8, Element("Pane", "그리기 영역", "canvas"));
+            var bounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("canvas-before", .3, Element("Pane", "그리기 영역", "canvas", bounds: bounds));
+            var after = Frame("canvas-after", .8, Element("Pane", "그리기 영역", "canvas", bounds: bounds));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 180;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 400;
+            recorded.EndScreenY = 200;
 
             var error = Assert.Throws<InvalidOperationException>(() =>
                 RecordedSemanticWorkflowExtractor.Compile(
                     "선을 그어 줘",
                     video,
                     1.2,
-                    [RecordedDrag(1, .5, before, after, target)],
+                    [recorded],
                     after));
 
-            Assert.Contains("슬라이더 또는 목록", error.Message);
+            Assert.Contains("구분할 근거", error.Message);
+        });
+    }
+
+    [Fact]
+    public void SurfaceDragLeavingTheObservedTarget_IsRejectedBeforeExecution()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Pane", "도형 작업 영역", "shape-canvas");
+            var bounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("surface-before", .3,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 왼쪽", "canvas-status"));
+            var after = Frame("surface-after", .8,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: bounds),
+                Element("Text", "도형 위치: 오른쪽", "canvas-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 180;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 540;
+            recorded.EndScreenY = 200;
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "도형을 작업 영역 밖으로 이동해 줘", video, 1.2, [recorded], after));
+
+            Assert.Contains("정규화할 수 없습니다", error.Message);
         });
     }
 
@@ -615,7 +686,8 @@ public sealed class SemanticWorkflowExperienceTests
         var video = Path.Combine(directory, "recording.mp4");
         var sidecar = Path.Combine(directory, "recording.series4.json");
         File.WriteAllBytes(video, [0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
-        var frame = Frame("before", .4, Element("Button", "다음", "next"));
+        var frame = Frame("before", .4,
+            Element("Button", "다음", "next", bounds: new SemanticBounds(10, 20, 110, 60)));
         var recorded = RecordedClick(1, .5, frame, Selector("Button", "다음", "next"));
         try
         {
@@ -626,6 +698,7 @@ public sealed class SemanticWorkflowExperienceTests
             Assert.Equal("before", restored.SemanticBefore?.Id);
             Assert.Equal("next", restored.SemanticTarget?.AutomationId);
             Assert.Equal("다음", restored.SemanticTarget?.Name);
+            Assert.Equal(new SemanticBounds(10, 20, 110, 60), restored.SemanticBefore?.Elements[0].Bounds);
         }
         finally
         {
@@ -659,8 +732,9 @@ public sealed class SemanticWorkflowExperienceTests
         string name,
         string automationId,
         string value = "",
-        bool focused = false) =>
-        new(role, name, automationId, value, KeyboardFocused: focused);
+        bool focused = false,
+        SemanticBounds? bounds = null) =>
+        new(role, name, automationId, value, KeyboardFocused: focused, Bounds: bounds);
 
     private static SemanticTargetSelector Selector(string role, string name, string automationId) =>
         new([role], name, automationId);

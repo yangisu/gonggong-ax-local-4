@@ -236,6 +236,42 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     }
 
     [WindowsIntegrationFact]
+    public void RecordedSurfaceDrag_UsesFreshBoundsAndProducesTheVisibleOutcome()
+    {
+        RunWithFixture("canvas", video =>
+        {
+            var target = Selector("Pane", "도형 작업 영역", "shape-canvas");
+            var demonstrationBounds = new SemanticBounds(100, 100, 500, 300);
+            var before = Frame("canvas-before", .3,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: demonstrationBounds),
+                Element("Text", "도형 위치: 왼쪽", "canvas-status"));
+            var after = Frame("canvas-after", .8,
+                Element("Pane", "도형 작업 영역", "shape-canvas", bounds: demonstrationBounds),
+                Element("Text", "도형 위치: 오른쪽", "canvas-status"));
+            var recorded = RecordedDrag(1, .5, before, after, target);
+            recorded.ScreenX = 160;
+            recorded.ScreenY = 200;
+            recorded.EndScreenX = 400;
+            recorded.EndScreenY = 200;
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "도형을 작업 영역 오른쪽으로 이동해 줘",
+                video,
+                1.2,
+                [recorded],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Equal("0.15,0.5,0.75,0.5", Assert.Single(workflow.Steps).Action.Value);
+            Assert.Contains(visible.Elements,
+                element => element.AutomationId == "canvas-status" && element.Name == "도형 위치: 오른쪽");
+        });
+    }
+
+    [WindowsIntegrationFact]
     public void RecordedArrowNavigation_SelectsTheDemonstratedOptionInARealWindow()
     {
         RunWithFixture("selection", video =>
@@ -365,8 +401,9 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
         string name,
         string automationId,
         string value = "",
-        bool focused = false) =>
-        new(role, name, automationId, value, KeyboardFocused: focused);
+        bool focused = false,
+        SemanticBounds? bounds = null) =>
+        new(role, name, automationId, value, KeyboardFocused: focused, Bounds: bounds);
 
     private static SemanticTargetSelector Selector(string role, string name, string automationId) =>
         new([role], name, automationId);

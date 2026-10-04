@@ -931,7 +931,7 @@ public partial class MainWindow : Window
             ? releaseOffset - pending.Offset
             : TimeSpan.Zero;
         var semanticCaptureId = isDrag
-            && pending.SemanticTarget?.Roles.Any(role => role is "Slider" or "ListItem") == true
+            && pending.SemanticTarget?.Roles.Any(role => role is "Slider" or "ListItem" or "Pane" or "Custom") == true
                 ? Guid.NewGuid()
                 : (Guid?)null;
         AddEventFromHook(

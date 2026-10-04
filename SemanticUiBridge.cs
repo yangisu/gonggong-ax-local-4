@@ -278,6 +278,13 @@ internal static class SemanticUiBridge
             ReorderListItem(element, ordinal);
             method = "semantic-list-reorder";
         }
+        else if (action == "drag-within")
+        {
+            if (!SemanticRelativeDrag.TryParse(text, out var drag))
+                throw new ArgumentException("Relative surface drag is invalid.");
+            DragWithin(element, drag);
+            method = "fresh-relative-surface-drag";
+        }
         else if (action == "toggle" && element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
         {
             ((TogglePattern)togglePattern).Toggle();
@@ -480,6 +487,35 @@ internal static class SemanticUiBridge
                 var y = startY + (endY - startY) * step / 10;
                 if (!SetCursorPos(x, y))
                     throw new InvalidOperationException("Could not move the pointer along the list reorder path.");
+                Thread.Sleep(25);
+            }
+        }
+        finally
+        {
+            mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+        }
+    }
+
+    private static void DragWithin(AutomationElement element, SemanticRelativeDrag drag)
+    {
+        var bounds = element.Current.BoundingRectangle;
+        if (bounds.IsEmpty || bounds.Width <= 1 || bounds.Height <= 1)
+            throw new InvalidOperationException("TARGET_MISMATCH: surface bounds are unavailable.");
+        var startX = checked((int)Math.Round(bounds.Left + bounds.Width * drag.StartX));
+        var startY = checked((int)Math.Round(bounds.Top + bounds.Height * drag.StartY));
+        var endX = checked((int)Math.Round(bounds.Left + bounds.Width * drag.EndX));
+        var endY = checked((int)Math.Round(bounds.Top + bounds.Height * drag.EndY));
+        if (!SetCursorPos(startX, startY))
+            throw new InvalidOperationException("Could not position the pointer at the surface start point.");
+        mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
+        try
+        {
+            for (var step = 1; step <= 12; step++)
+            {
+                var x = startX + (endX - startX) * step / 12;
+                var y = startY + (endY - startY) * step / 12;
+                if (!SetCursorPos(x, y))
+                    throw new InvalidOperationException("Could not move the pointer along the surface drag path.");
                 Thread.Sleep(25);
             }
         }
