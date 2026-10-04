@@ -266,6 +266,11 @@ internal static class SemanticUiBridge
                     expansion.Collapse();
             }
         }
+        else if (action == "focus")
+        {
+            element.SetFocus();
+            method = "uia-focus";
+        }
         else if (action == "toggle" && element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
         {
             ((TogglePattern)togglePattern).Toggle();
@@ -349,6 +354,7 @@ internal static class SemanticUiBridge
             enabled = element.Current.IsEnabled,
             offscreen = element.Current.IsOffscreen,
             password = element.Current.IsPassword,
+            keyboard_focused = element.Current.HasKeyboardFocus,
             patterns = element.GetSupportedPatterns().Select(pattern => pattern.ProgrammaticName).ToArray(),
             bounds = new[] { rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom },
         };

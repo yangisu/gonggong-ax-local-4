@@ -2,7 +2,7 @@ param(
     [string]$OutputDirectory = "artifacts/recording-to-semantic-workflow",
     [string]$EnginePath = "",
     [string]$FixturePath = "",
-    [ValidateSet("text", "scroll", "keyboard", "slider", "selection")]
+    [ValidateSet("text", "scroll", "keyboard", "slider", "selection", "focus")]
     [string]$Scenario = "text"
 )
 
@@ -71,6 +71,7 @@ try {
         "keyboard" { "keyboard-demo" }
         "slider" { "slider-demo" }
         "selection" { "selection-demo" }
+        "focus" { "focus-demo" }
         default { "editor-demo" }
     }
     $intent = switch ($Scenario) {
@@ -78,6 +79,7 @@ try {
         "keyboard" { "키보드로 어두운 모드를 켜 줘" }
         "slider" { "음량을 높여 줘" }
         "selection" { "색상을 파랑으로 선택해 줘" }
+        "focus" { "Tab으로 검색 버튼까지 이동해 줘" }
         default { "새 메모를 만들고 meeting을 입력해 줘" }
     }
     $expectedAction = switch ($Scenario) {
@@ -85,6 +87,7 @@ try {
         "keyboard" { "toggle" }
         "slider" { "set-range" }
         "selection" { "select-option" }
+        "focus" { "focus" }
         default { "type" }
     }
     $demonstration = Start-Process -FilePath $FixturePath -ArgumentList $demonstrationMode -PassThru
@@ -121,6 +124,7 @@ try {
         "keyboard" { "settings" }
         "slider" { "slider" }
         "selection" { "selection" }
+        "focus" { "focus" }
         default { "editor" }
     }
     $replay = Start-Process -FilePath $FixturePath -ArgumentList $replayMode -PassThru
@@ -140,11 +144,14 @@ try {
     $expectedOption = if ($Scenario -eq "selection") { [string]$workflowDocument.steps[0].action.value } else { $null }
     $selected = @($observed.elements | Where-Object { $_.automation_id -eq "color-selector" -and $_.value -eq $expectedOption })
     $selectionStatus = @($observed.elements | Where-Object { $_.automation_id -eq "color-status" -and $_.name -eq "선택: $expectedOption" })
+    $focused = @($observed.elements | Where-Object { $_.automation_id -eq "focus-search" -and $_.keyboard_focused -eq $true })
+    $focusStatus = @($observed.elements | Where-Object { $_.automation_id -eq "focus-status" -and $_.name -eq "포커스: 검색" })
     $outcomeVisible = switch ($Scenario) {
         "scroll" { $scrolled.Count -eq 1 }
         "keyboard" { $toggled.Count -eq 1 -and $darkStatus.Count -eq 1 }
         "slider" { $adjusted.Count -eq 1 -and $rangeStatus.Count -eq 1 }
         "selection" { $selected.Count -eq 1 -and $selectionStatus.Count -eq 1 }
+        "focus" { $focused.Count -eq 1 -and $focusStatus.Count -eq 1 }
         default { $editor.Count -eq 1 -and $saved.Count -eq 1 }
     }
     $passed = $run.Status -eq "SUCCESS" -and $outcomeVisible
@@ -161,8 +168,8 @@ try {
         videoEvidenceFrameCount = @($workflowDocument.videoEvidence).Count
         runStatus = $run.Status
         visibleEditorValue = if ($editor.Count -eq 1) { $editor[0].value } else { $null }
-        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } else { $null }
-        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
+        visibleControlValue = if ($toggled.Count -eq 1) { $toggled[0].value } elseif ($adjusted.Count -eq 1) { $adjusted[0].value } elseif ($selected.Count -eq 1) { $selected[0].value } elseif ($focused.Count -eq 1) { "keyboard-focused" } else { $null }
+        visibleStatus = if ($Scenario -eq "scroll" -and $scrolled.Count -eq 1) { $scrolled[0].name } elseif ($Scenario -eq "keyboard" -and $darkStatus.Count -eq 1) { $darkStatus[0].name } elseif ($Scenario -eq "slider" -and $rangeStatus.Count -eq 1) { $rangeStatus[0].name } elseif ($Scenario -eq "selection" -and $selectionStatus.Count -eq 1) { $selectionStatus[0].name } elseif ($Scenario -eq "focus" -and $focusStatus.Count -eq 1) { $focusStatus[0].name } elseif ($saved.Count -eq 1) { $saved[0].name } else { $null }
         passed = $passed
     }
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $output "summary.json")

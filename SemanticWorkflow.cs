@@ -11,7 +11,8 @@ public sealed record SemanticTargetSelector(
     string Name,
     string? AutomationId = null,
     bool AllowOffscreen = false,
-    string? ExpectedValue = null);
+    string? ExpectedValue = null,
+    bool RequireKeyboardFocus = false);
 
 public sealed record SemanticElementEvidence(
     string Role,
@@ -20,7 +21,8 @@ public sealed record SemanticElementEvidence(
     string Value = "",
     bool Enabled = true,
     bool Offscreen = false,
-    bool Password = false);
+    bool Password = false,
+    bool KeyboardFocused = false);
 
 public sealed record SemanticDemonstrationFrame(
     string Id,
@@ -197,7 +199,7 @@ public static class SemanticWorkflowCompiler
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "select", "select-option", "toggle", "scroll", "set-range",
+        "click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus",
     };
 
     private static readonly string[] IrreversibleTerms =
@@ -397,7 +399,7 @@ public static class SemanticWorkflowCompiler
             previous.Url,
             previous.Elements.Select((element, index) => new SemanticWorkflowElement(
                 $"previous-{index}", element.Role, element.Name, element.AutomationId, element.Value,
-                element.Enabled, element.Offscreen, element.Password)).ToArray(), 0);
+                element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToArray(), 0);
         return !predicate.Matches(observation);
     }
 
@@ -428,10 +430,11 @@ public static class SemanticWorkflowCompiler
             [element.Role],
             element.Name,
             string.IsNullOrWhiteSpace(element.AutomationId) ? null : element.AutomationId,
-            ExpectedValue: string.IsNullOrEmpty(element.Value) ? null : element.Value);
+            ExpectedValue: string.IsNullOrEmpty(element.Value) ? null : element.Value,
+            RequireKeyboardFocus: element.KeyboardFocused);
 
     private static string Identity(SemanticElementEvidence element) =>
-        $"{element.Role}\u001f{element.Name}\u001f{element.AutomationId}\u001f{element.Value}";
+        $"{element.Role}\u001f{element.Name}\u001f{element.AutomationId}\u001f{element.Value}\u001f{element.KeyboardFocused}";
 
     private static bool Matches(SemanticElementEvidence element, SemanticTargetSelector selector) =>
         selector.Roles.Any(role => string.Equals(role, element.Role, StringComparison.OrdinalIgnoreCase))
@@ -439,7 +442,8 @@ public static class SemanticWorkflowCompiler
         && (string.IsNullOrWhiteSpace(selector.AutomationId)
             || string.Equals(selector.AutomationId, element.AutomationId, StringComparison.Ordinal))
         && (selector.ExpectedValue is null
-            || string.Equals(selector.ExpectedValue, element.Value, StringComparison.Ordinal));
+            || string.Equals(selector.ExpectedValue, element.Value, StringComparison.Ordinal))
+        && (!selector.RequireKeyboardFocus || element.KeyboardFocused);
 }
 
 public sealed record SemanticWorkflowElement(
@@ -450,7 +454,8 @@ public sealed record SemanticWorkflowElement(
     string Value,
     bool Enabled,
     bool Offscreen,
-    bool Password);
+    bool Password,
+    bool KeyboardFocused = false);
 
 public sealed record SemanticWorkflowObservation(
     string ProcessName,
@@ -472,7 +477,8 @@ public static class SemanticWorkflowMatching
             && (string.IsNullOrWhiteSpace(selector.AutomationId)
                 || string.Equals(selector.AutomationId, element.AutomationId, StringComparison.Ordinal))
             && (selector.ExpectedValue is null
-                || string.Equals(selector.ExpectedValue, element.Value, StringComparison.Ordinal))).ToArray();
+                || string.Equals(selector.ExpectedValue, element.Value, StringComparison.Ordinal))
+            && (!selector.RequireKeyboardFocus || element.KeyboardFocused)).ToArray();
 }
 
 public sealed record SemanticPlannedAction(

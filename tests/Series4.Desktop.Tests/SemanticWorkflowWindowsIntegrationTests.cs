@@ -193,6 +193,49 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
         });
     }
 
+    [WindowsIntegrationFact]
+    public void RecordedTabTraversal_FocusesTheDemonstratedControlInARealWindow()
+    {
+        RunWithFixture("focus", video =>
+        {
+            var name = Selector("Edit", "이름", "focus-name");
+            var email = Selector("Edit", "이메일", "focus-email");
+            var before = Frame("focus-name", .3,
+                Element("Edit", "이름", "focus-name", focused: true),
+                Element("Edit", "이메일", "focus-email"),
+                Element("Button", "검색", "focus-search"),
+                Element("Text", "포커스: 이름", "focus-status"));
+            var middle = Frame("focus-email", .55,
+                Element("Edit", "이름", "focus-name"),
+                Element("Edit", "이메일", "focus-email", focused: true),
+                Element("Button", "검색", "focus-search"),
+                Element("Text", "포커스: 이메일", "focus-status"));
+            var after = Frame("focus-search", .8,
+                Element("Edit", "이름", "focus-name"),
+                Element("Edit", "이메일", "focus-email"),
+                Element("Button", "검색", "focus-search", focused: true),
+                Element("Text", "포커스: 검색", "focus-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "Tab으로 검색 버튼까지 이동해 줘",
+                video,
+                1.2,
+                [
+                    RecordedKey(1, .45, KeyCode.VcTab, before, middle, name),
+                    RecordedKey(2, .7, KeyCode.VcTab, middle, after, email),
+                ],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Contains(visible.Elements,
+                element => element.AutomationId == "focus-search" && element.KeyboardFocused);
+            Assert.Contains(visible.Elements, element => element.Name == "포커스: 검색");
+        });
+    }
+
     private static void RunWithFixture(string mode, Action<string> test)
     {
         var executable = FixtureExecutable();
@@ -243,8 +286,13 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     private static string FrameHash(string id) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).ToLowerInvariant();
 
-    private static SemanticElementEvidence Element(string role, string name, string automationId, string value = "") =>
-        new(role, name, automationId, value);
+    private static SemanticElementEvidence Element(
+        string role,
+        string name,
+        string automationId,
+        string value = "",
+        bool focused = false) =>
+        new(role, name, automationId, value, KeyboardFocused: focused);
 
     private static SemanticTargetSelector Selector(string role, string name, string automationId) =>
         new([role], name, automationId);

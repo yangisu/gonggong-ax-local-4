@@ -462,6 +462,78 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedTabTraversal_BecomesFocusOnTheFinalSemanticTarget()
+    {
+        WithVideo(video =>
+        {
+            var name = Selector("Edit", "이름", "focus-name");
+            var email = Selector("Edit", "이메일", "focus-email");
+            var before = Frame("focus-name", .3,
+                Element("Edit", "이름", "focus-name", focused: true),
+                Element("Edit", "이메일", "focus-email"),
+                Element("Button", "검색", "focus-search"),
+                Element("Text", "포커스: 이름", "focus-status"));
+            var middle = Frame("focus-email", .55,
+                Element("Edit", "이름", "focus-name"),
+                Element("Edit", "이메일", "focus-email", focused: true),
+                Element("Button", "검색", "focus-search"),
+                Element("Text", "포커스: 이메일", "focus-status"));
+            var after = Frame("focus-search", .8,
+                Element("Edit", "이름", "focus-name"),
+                Element("Edit", "이메일", "focus-email"),
+                Element("Button", "검색", "focus-search", focused: true),
+                Element("Text", "포커스: 검색", "focus-status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "Tab으로 검색 버튼까지 이동해 줘",
+                video,
+                1.2,
+                [
+                    RecordedKey(1, .45, KeyCode.VcTab, before, middle, name),
+                    RecordedKey(2, .7, KeyCode.VcTab, middle, after, email),
+                ],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("focus", step.Action.Kind);
+            Assert.Equal("focus-search", step.Action.Target!.AutomationId);
+            Assert.Equal([0, 1], step.Evidence.EventIndices);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.AutomationId == "focus-search" && selector.RequireKeyboardFocus);
+            Assert.Contains(surface.Current.Elements,
+                element => element.AutomationId == "focus-search" && element.KeyboardFocused);
+        });
+    }
+
+    [Fact]
+    public void TabTraversalWithMultipleFocusedCandidates_IsRejectedBeforeExecution()
+    {
+        WithVideo(video =>
+        {
+            var before = Frame("focus-before", .3,
+                Element("Edit", "이름", "focus-name", focused: true),
+                Element("Button", "검색", "focus-search"));
+            var ambiguous = Frame("focus-ambiguous", .7,
+                Element("Button", "검색", "focus-search", focused: true),
+                Element("Button", "도움말", "focus-help", focused: true));
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "Tab으로 검색 버튼까지 이동해 줘",
+                    video,
+                    1,
+                    [RecordedKey(1, .5, KeyCode.VcTab, before, ambiguous,
+                        Selector("Edit", "이름", "focus-name"))],
+                    ambiguous));
+
+            Assert.Contains("키보드 포커스 대상을 정확히 하나", error.Message);
+        });
+    }
+
+    [Fact]
     public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
     {
         WithVideo(video =>
@@ -531,8 +603,13 @@ public sealed class SemanticWorkflowExperienceTests
     private static string FrameHash(string id) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))).ToLowerInvariant();
 
-    private static SemanticElementEvidence Element(string role, string name, string automationId, string value = "") =>
-        new(role, name, automationId, value);
+    private static SemanticElementEvidence Element(
+        string role,
+        string name,
+        string automationId,
+        string value = "",
+        bool focused = false) =>
+        new(role, name, automationId, value, KeyboardFocused: focused);
 
     private static SemanticTargetSelector Selector(string role, string name, string automationId) =>
         new([role], name, automationId);
@@ -661,7 +738,7 @@ public sealed class SemanticWorkflowExperienceTests
             var frame = frames[state];
             var elements = frame.Elements.Select((element, index) => new SemanticWorkflowElement(
                 $"{element.AutomationId}-{index}", element.Role, element.Name, element.AutomationId,
-                element.Value, element.Enabled, element.Offscreen, element.Password)).ToList();
+                element.Value, element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToList();
             if (duplicateTarget && state == 0)
             {
                 var original = elements.Single(element => element.AutomationId == actions[0].Target!.AutomationId);
@@ -706,7 +783,7 @@ public sealed class SemanticWorkflowExperienceTests
                 frame.Url,
                 frame.Elements.Select((element, index) => new SemanticWorkflowElement(
                     $"{element.AutomationId}-{index}", element.Role, element.Name, element.AutomationId,
-                    element.Value, element.Enabled, element.Offscreen, element.Password)).ToArray(),
+                    element.Value, element.Enabled, element.Offscreen, element.Password, element.KeyboardFocused)).ToArray(),
                 revision);
         }
 

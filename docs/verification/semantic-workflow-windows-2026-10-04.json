@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 6,
-  "passed": 6,
+  "total": 7,
+  "passed": 7,
   "failed": 0,
   "scenarios": [
     {
@@ -56,6 +56,16 @@
       "visibleUserOutcome": {
         "selectedValue": "파랑",
         "status": "선택: 파랑"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "Tab으로 검색 버튼까지 이동해 줘",
+      "workflowSource": "semantic demonstration with synchronized Tab keys and normalized focused-element evidence",
+      "visibleUserOutcome": {
+        "focusedAutomationId": "focus-search",
+        "keyboardFocused": true,
+        "status": "포커스: 검색"
       },
       "result": "PASS"
     }

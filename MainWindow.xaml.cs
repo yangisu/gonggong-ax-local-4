@@ -1095,7 +1095,8 @@ public partial class MainWindow : Window
         {
             var semantic = WindowsSemanticWorkflowSurface.CaptureFocusedDemonstrationFrame(
                 $"session-{recordingSessionId}-key-{recordingClock.ElapsedTicks}",
-                recordingClock.Elapsed.TotalSeconds);
+                recordingClock.Elapsed.TotalSeconds,
+                includeAllElements: e.Data.KeyCode == KeyCode.VcTab);
             semanticBefore = semantic.Frame;
             semanticTarget = semantic.Target;
             if (semanticTarget is not null)
@@ -1156,7 +1157,8 @@ public partial class MainWindow : Window
         {
             var after = WindowsSemanticWorkflowSurface.CaptureFocusedDemonstrationFrame(
                 $"session-{recordingSessionId}-key-after-{recordingClock.ElapsedTicks}",
-                recordingClock.Elapsed.TotalSeconds).Frame;
+                recordingClock.Elapsed.TotalSeconds,
+                includeAllElements: e.Data.KeyCode == KeyCode.VcTab).Frame;
             pendingSemanticAfters[id] = after;
             Dispatcher.BeginInvoke(() => ApplySemanticAfter(id, after), DispatcherPriority.Background);
         }

@@ -6,6 +6,7 @@ public static class RecordedSemanticWorkflowExtractor
 {
     private static readonly TimeSpan MaximumTextKeyGap = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaximumSelectionKeyGap = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaximumFocusKeyGap = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaximumWheelGap = TimeSpan.FromSeconds(1);
 
     public static SemanticWorkflowDefinition Compile(
@@ -182,6 +183,39 @@ public static class RecordedSemanticWorkflowExtractor
                     "select-option",
                     current.Event.SemanticTarget!,
                     finalValue,
+                    before,
+                    after));
+                index = cursor;
+                continue;
+            }
+
+            if (current.Event.ActionKind == MacroActionKind.KeyStroke
+                && IsFocusNavigation(current.Event))
+            {
+                RequireFocusEvidence(current.Event);
+                var group = new List<IndexedEvent> { current };
+                var cursor = index + 1;
+                while (cursor < events.Count
+                    && events[cursor].Event.ActionKind == MacroActionKind.KeyStroke
+                    && IsFocusNavigation(events[cursor].Event)
+                    && SameWindow(current.Event.SemanticBefore!, events[cursor].Event.SemanticBefore!)
+                    && events[cursor].Event.Offset - events[cursor - 1].Event.Offset <= MaximumFocusKeyGap)
+                {
+                    RequireFocusEvidence(events[cursor].Event);
+                    group.Add(events[cursor]);
+                    cursor++;
+                }
+                var before = group[0].Event.SemanticBefore!;
+                var after = group[^1].Event.SemanticAfter!;
+                var initialTarget = FocusedTarget(before, current.Event.Sequence);
+                var finalTarget = FocusedTarget(after, group[^1].Event.Sequence);
+                if (SameTarget(initialTarget, finalTarget))
+                    throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 Tab 탐색 결과 포커스가 바뀌지 않았습니다.");
+                units.Add(new ExtractedUnit(
+                    group,
+                    "focus",
+                    finalTarget,
+                    null,
                     before,
                     after));
                 index = cursor;
@@ -386,6 +420,44 @@ public static class RecordedSemanticWorkflowExtractor
         if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
             throw new InvalidOperationException($"이벤트 {item.Sequence}에 선택 전후 의미 증거가 없습니다.");
     }
+
+    private static bool IsFocusNavigation(RecordedEvent item)
+    {
+        if (item.SemanticTarget is null
+            || item.ModifierKeyCodes.Any(key => key is not (KeyCode.VcLeftShift or KeyCode.VcRightShift)))
+            return false;
+        var keys = item.KeyCodes.Where(key => key is not (KeyCode.VcLeftShift or KeyCode.VcRightShift)).ToArray();
+        return keys.Length == 1 && keys[0] == KeyCode.VcTab;
+    }
+
+    private static void RequireFocusEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 Tab 포커스 탐색 전후 의미 증거가 없습니다.");
+        _ = FocusedTarget(item.SemanticBefore, item.Sequence);
+        _ = FocusedTarget(item.SemanticAfter, item.Sequence);
+    }
+
+    private static SemanticTargetSelector FocusedTarget(SemanticDemonstrationFrame frame, long sequence)
+    {
+        var focused = frame.Elements.Where(element => element.KeyboardFocused
+            && element.Enabled
+            && !element.Password
+            && !element.Offscreen
+            && !string.IsNullOrWhiteSpace(element.Name)).Take(2).ToArray();
+        if (focused.Length != 1)
+            throw new InvalidOperationException($"이벤트 {sequence}의 화면에서 키보드 포커스 대상을 정확히 하나 확인할 수 없습니다: {focused.Length}개");
+        var element = focused[0];
+        return new SemanticTargetSelector(
+            [element.Role],
+            element.Name,
+            string.IsNullOrWhiteSpace(element.AutomationId) ? null : element.AutomationId,
+            element.Offscreen);
+    }
+
+    private static bool SameWindow(SemanticDemonstrationFrame first, SemanticDemonstrationFrame second) =>
+        string.Equals(Normalize(first.ProcessName), Normalize(second.ProcessName), StringComparison.Ordinal)
+        && string.Equals(first.WindowTitle.Trim(), second.WindowTitle.Trim(), StringComparison.OrdinalIgnoreCase);
 
     private static void RequireScrollEvidence(RecordedEvent item)
     {

@@ -24,7 +24,7 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo";
+        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
@@ -32,6 +32,7 @@ public static class Program
             "scroll" or "scroll-demo" => ScrollContent(),
             "slider" or "slider-demo" => SliderContent(),
             "selection" or "selection-demo" => SelectionContent(),
+            "focus" or "focus-demo" => FocusContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
@@ -116,6 +117,24 @@ public static class Program
                             keybd_event(0x28, 0, 0, UIntPtr.Zero);
                             Thread.Sleep(120);
                             keybd_event(0x28, 0, KeyUp, UIntPtr.Zero);
+                            Thread.Sleep(300);
+                        }
+                    });
+                    return;
+                }
+                if (mode == "focus-demo")
+                {
+                    var first = FindDescendant<TextBox>(window)
+                        ?? throw new InvalidOperationException("이름 입력란을 찾지 못했습니다.");
+                    first.Focus();
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        for (var index = 0; index < 2; index++)
+                        {
+                            keybd_event(0x09, 0, 0, UIntPtr.Zero);
+                            Thread.Sleep(120);
+                            keybd_event(0x09, 0, KeyUp, UIntPtr.Zero);
                             Thread.Sleep(300);
                         }
                     });
@@ -285,6 +304,31 @@ public static class Program
             AutomationProperties.SetName(status, status.Text);
         };
         panel.Children.Add(combo);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement FocusContent()
+    {
+        var panel = Panel("고객 검색");
+        var status = Named(new TextBlock { Text = "포커스 대기", FontSize = 18 }, "focus-status", "포커스 대기");
+        var name = Named(new TextBox { Width = 260, Height = 40, HorizontalAlignment = HorizontalAlignment.Left },
+            "focus-name", "이름");
+        var email = Named(new TextBox { Width = 260, Height = 40, HorizontalAlignment = HorizontalAlignment.Left },
+            "focus-email", "이메일");
+        var search = Named(new Button { Content = "검색", Width = 140, Height = 44, HorizontalAlignment = HorizontalAlignment.Left },
+            "focus-search", "검색");
+        void Report(string target)
+        {
+            status.Text = $"포커스: {target}";
+            AutomationProperties.SetName(status, status.Text);
+        }
+        name.GotKeyboardFocus += (_, _) => Report("이름");
+        email.GotKeyboardFocus += (_, _) => Report("이메일");
+        search.GotKeyboardFocus += (_, _) => Report("검색");
+        panel.Children.Add(name);
+        panel.Children.Add(email);
+        panel.Children.Add(search);
         panel.Children.Add(status);
         return panel;
     }

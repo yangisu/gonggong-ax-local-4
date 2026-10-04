@@ -73,7 +73,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 element.Value,
                 element.Enabled,
                 element.Offscreen,
-                element.Password)).ToArray());
+                element.Password,
+                element.KeyboardFocused)).ToArray());
         return (frame, target);
     }
 
@@ -116,8 +117,10 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
 
     public static (SemanticDemonstrationFrame Frame, SemanticTargetSelector? Target) CaptureFocusedDemonstrationFrame(
         string id,
-        double offsetSeconds)
+        double offsetSeconds,
+        bool includeAllElements = false)
     {
+        var observation = includeAllElements ? ObserveOnce() : null;
         var root = ForegroundRoot();
         var processId = root.Current.ProcessId;
         if (processId == Environment.ProcessId || processId == (int)MainWindow.BridgeParentPid)
@@ -145,12 +148,30 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             [
                 new SemanticElementEvidence(
                     role, element.Current.Name, automationId, value,
-                    element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword),
+                    element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword, true),
             ];
+        }
+        if (observation is not null)
+        {
+            if (!SameProcess(observation.ProcessName, process)
+                || !string.Equals(observation.WindowTitle, root.Current.Name ?? string.Empty, StringComparison.Ordinal))
+                throw new InvalidOperationException("Tab 입력의 의미 화면을 캡처하는 동안 전경 창이 바뀌었습니다.");
+            process = observation.ProcessName;
+            elements = observation.Elements.Select(item => new SemanticElementEvidence(
+                item.Role, item.Name, item.AutomationId, item.Value,
+                item.Enabled, item.Offscreen, item.Password, item.KeyboardFocused)).ToArray();
+            if (target is not null && !elements.Any(item => item.KeyboardFocused))
+            {
+                elements = elements.Append(new SemanticElementEvidence(
+                    target.Roles[0], target.Name, target.AutomationId ?? string.Empty,
+                    ReadValue(element!), element!.Current.IsEnabled, element.Current.IsOffscreen,
+                    element.Current.IsPassword, true)).ToArray();
+            }
         }
         return (
             new SemanticDemonstrationFrame(
-                id, offsetSeconds, process, root.Current.Name ?? string.Empty, string.Empty, elements),
+                id, offsetSeconds, process, observation?.WindowTitle ?? root.Current.Name ?? string.Empty,
+                observation?.Url ?? string.Empty, elements),
             target);
     }
 
@@ -259,6 +280,9 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                     throw new InvalidOperationException("TARGET_MISMATCH: 범위 조절 값이 현재 대상의 허용 범위를 벗어났습니다.");
                 range.SetValue(rangeValue);
                 break;
+            case "focus":
+                element.SetFocus();
+                break;
             default:
                 throw new InvalidOperationException($"지원하지 않는 의미 동작입니다: {action.Kind}");
         }
@@ -274,7 +298,15 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         try { process = Process.GetProcessById(processId).ProcessName; }
         catch { process = string.Empty; }
         var title = root.Current.Name ?? string.Empty;
-        var elements = Enumerate(root, 600).Select(ToElement).ToArray();
+        string? focusedRuntimeId = null;
+        try
+        {
+            var focused = AutomationElement.FocusedElement;
+            if (focused is not null && focused.Current.ProcessId == processId)
+                focusedRuntimeId = RuntimeIdentity(focused);
+        }
+        catch (ElementNotAvailableException) { }
+        var elements = Enumerate(root, 600).Select(element => ToElement(element, focusedRuntimeId)).ToArray();
         var url = ReadActiveUrl(root);
         return new SemanticWorkflowObservation(process, title, url, elements, Revision(process, title, url, elements));
     }
@@ -295,7 +327,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 element.Value,
                 element.Enabled,
                 element.Offscreen,
-                element.Password)).ToArray());
+                element.Password,
+                element.KeyboardFocused)).ToArray());
 
     private static AutomationElement ForegroundRoot()
     {
@@ -323,7 +356,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                     && (string.IsNullOrWhiteSpace(selector.AutomationId)
                         || string.Equals(selector.AutomationId, element.Current.AutomationId, StringComparison.Ordinal))
                     && (selector.ExpectedValue is null
-                        || string.Equals(selector.ExpectedValue, ReadValue(element), StringComparison.Ordinal));
+                        || string.Equals(selector.ExpectedValue, ReadValue(element), StringComparison.Ordinal))
+                    && (!selector.RequireKeyboardFocus || element.Current.HasKeyboardFocus);
             }
             catch (ElementNotAvailableException) { return false; }
         }).Take(2).ToArray();
@@ -352,18 +386,22 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         }
     }
 
-    private static SemanticWorkflowElement ToElement(AutomationElement element)
+    private static SemanticWorkflowElement ToElement(AutomationElement element, string? focusedRuntimeId = null)
     {
         var role = Role(element);
         var name = element.Current.Name ?? string.Empty;
         var automationId = element.Current.AutomationId ?? string.Empty;
-        var runtime = string.Join('.', element.GetRuntimeId());
+        var runtime = RuntimeIdentity(element);
         var idSource = $"{runtime}|{role}|{name}|{automationId}";
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(idSource))).ToLowerInvariant()[..24];
         return new SemanticWorkflowElement(
             id, role, name, automationId, ReadValue(element),
-            element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword);
+            element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword,
+            focusedRuntimeId is not null && string.Equals(runtime, focusedRuntimeId, StringComparison.Ordinal));
     }
+
+    private static string RuntimeIdentity(AutomationElement element) =>
+        string.Join('.', element.GetRuntimeId());
 
     private static string Role(AutomationElement element) =>
         element.Current.ControlType.ProgrammaticName.Replace("ControlType.", string.Empty, StringComparison.Ordinal);
@@ -440,7 +478,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
     {
         var source = new StringBuilder().Append(process).Append('\u001f').Append(title).Append('\u001f').Append(url);
         foreach (var element in elements.OrderBy(item => item.Id, StringComparer.Ordinal))
-            source.Append('\u001e').Append(element.Id).Append('|').Append(element.Value).Append('|').Append(element.Offscreen);
+            source.Append('\u001e').Append(element.Id).Append('|').Append(element.Value).Append('|')
+                .Append(element.Offscreen).Append('|').Append(element.KeyboardFocused);
         return BitConverter.ToInt64(SHA256.HashData(Encoding.UTF8.GetBytes(source.ToString())), 0);
     }
 
