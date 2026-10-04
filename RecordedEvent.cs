@@ -219,6 +219,10 @@ public sealed class RecordedEvent : INotifyPropertyChanged
 
     public SemanticTargetSelector? SemanticTarget { get; set; }
 
+    public SemanticDemonstrationFrame? SemanticAfter { get; set; }
+
+    public Guid? SemanticCaptureId { get; set; }
+
     public string TimeText
     {
         get

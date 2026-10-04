@@ -37,7 +37,9 @@ public sealed record SemanticDemonstrationAction(
     SemanticTargetSelector? Target,
     string? Value,
     string BeforeFrameId,
-    string AfterFrameId);
+    string AfterFrameId,
+    IReadOnlyList<int>? AdditionalEventIndices = null,
+    IReadOnlyList<string>? AdditionalScreenEvidenceIds = null);
 
 public sealed record SemanticDemonstration(
     string NaturalLanguageIntent,
@@ -81,9 +83,10 @@ public sealed record SemanticStatePredicate(
 }
 
 public sealed record SemanticWorkflowEvidence(
-    int EventIndex,
+    IReadOnlyList<int> EventIndices,
     string BeforeFrameId,
-    string AfterFrameId);
+    string AfterFrameId,
+    IReadOnlyList<string> ScreenEvidenceIds);
 
 public sealed record SemanticWorkflowActionDefinition(
     string Kind,
@@ -195,7 +198,15 @@ public static class SemanticWorkflowCompiler
             var target = before.Elements.Single(element => Matches(element, action.Target));
             if (!target.Enabled || target.Password)
                 throw new InvalidOperationException($"단계 {action.Id}의 대상은 비활성 또는 비밀번호 필드입니다.");
-            links.Add(new WorkflowEvidenceLink(action.Id, [action.EventIndex], [action.BeforeFrameId, action.AfterFrameId]));
+            var eventIndices = new[] { action.EventIndex }
+                .Concat(action.AdditionalEventIndices ?? [])
+                .Distinct()
+                .ToArray();
+            var screenIds = new[] { action.BeforeFrameId, action.AfterFrameId }
+                .Concat(action.AdditionalScreenEvidenceIds ?? [])
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            links.Add(new WorkflowEvidenceLink(action.Id, eventIndices, screenIds));
         }
 
         var screens = demonstration.Frames.Select(frame => new DemonstrationScreenEvidence(
@@ -229,7 +240,14 @@ public static class SemanticWorkflowCompiler
                 precondition,
                 success,
                 new SemanticWorkflowActionDefinition(action.Kind.ToLowerInvariant(), action.Target, action.Value),
-                new SemanticWorkflowEvidence(action.EventIndex, action.BeforeFrameId, action.AfterFrameId)));
+                new SemanticWorkflowEvidence(
+                    new[] { action.EventIndex }.Concat(action.AdditionalEventIndices ?? []).Distinct().ToArray(),
+                    action.BeforeFrameId,
+                    action.AfterFrameId,
+                    new[] { action.BeforeFrameId, action.AfterFrameId }
+                        .Concat(action.AdditionalScreenEvidenceIds ?? [])
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray())));
         }
 
         string hash;

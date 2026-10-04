@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Series4.Desktop;
+using SharpHook.Data;
 using Xunit;
 
 namespace Series4.Desktop.Tests;
@@ -24,25 +25,24 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     {
         RunWithFixture("note", video =>
         {
-            var demonstration = new SemanticDemonstration(
-                "새 메모를 만들고 회의록이라고 입력해 줘", video, 2,
-                [new(0, .5, "MouseLeftClick"), new(1, 1.1, "TextEntry")],
-                [
-                    Frame("start", .3, Element("Button", "새 메모", "new-note"), Element("Text", "메모 업무", "heading")),
-                    Frame("editor", .8,
-                        Element("Edit", "메모 내용", "note-editor"),
-                        Element("Text", "새 메모 편집 중", "heading"),
-                        Element("Text", "입력 대기", "note-status")),
-                    Frame("typed", 1.3,
-                        Element("Edit", "메모 내용", "note-editor", "회의록"),
-                        Element("Text", "새 메모 편집 중", "heading"),
-                        Element("Text", "저장됨", "note-status")),
-                ],
-                [
-                    new("create-note", 0, .5, "click", Selector("Button", "새 메모", "new-note"), null, "start", "editor"),
-                    new("enter-note", 1, 1.1, "type", Selector("Edit", "메모 내용", "note-editor"), "회의록", "editor", "typed"),
-                ]);
-            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+            var start = Frame("start", .3, Element("Button", "새 메모", "new-note"));
+            var empty = Frame("empty", .8, Element("Edit", "메모 내용", "note-editor"));
+            var first = Frame("first", .95, Element("Edit", "메모 내용", "note-editor", "회"));
+            var second = Frame("second", 1.1, Element("Edit", "메모 내용", "note-editor", "회의"));
+            var typed = Frame("typed", 1.25, Element("Edit", "메모 내용", "note-editor", "회의록"));
+            var final = Frame("final", 1.6,
+                Element("Edit", "메모 내용", "note-editor", "회의록"),
+                Element("Text", "저장됨", "note-status"));
+            var editor = Selector("Edit", "메모 내용", "note-editor");
+            var recorded = new[]
+            {
+                RecordedClick(1, .5, start, Selector("Button", "새 메모", "new-note")),
+                RecordedKey(2, .85, KeyCode.VcH, empty, first, editor),
+                RecordedKey(3, 1.0, KeyCode.VcO, first, second, editor),
+                RecordedKey(4, 1.15, KeyCode.VcI, second, typed, editor),
+            };
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "새 메모를 만들고 회의록이라고 입력해 줘", video, 2, recorded, final);
             var surface = new WindowsSemanticWorkflowSurface();
 
             var result = new SemanticWorkflowRunner().Run(workflow, surface);
@@ -59,19 +59,15 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     {
         RunWithFixture("settings", video =>
         {
-            var demonstration = new SemanticDemonstration(
+            var light = Frame("light", .4,
+                Element("CheckBox", "어두운 모드", "dark-mode", "Off"));
+            var dark = Frame("dark", .9,
+                Element("CheckBox", "어두운 모드", "dark-mode", "On"),
+                Element("Text", "어두운 모드 사용 중", "mode-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
                 "설정에서 어두운 모드를 켜 줘", video, 1.5,
-                [new(0, .6, "MouseLeftClick")],
-                [
-                    Frame("light", .4,
-                        Element("CheckBox", "어두운 모드", "dark-mode", "Off"),
-                        Element("Text", "밝은 모드 사용 중", "mode-status")),
-                    Frame("dark", .9,
-                        Element("CheckBox", "어두운 모드", "dark-mode", "On"),
-                        Element("Text", "어두운 모드 사용 중", "mode-status")),
-                ],
-                [new("enable-dark-mode", 0, .6, "toggle", Selector("CheckBox", "어두운 모드", "dark-mode"), null, "light", "dark")]);
-            var workflow = SemanticWorkflowCompiler.Compile(demonstration);
+                [RecordedClick(1, .6, light, Selector("CheckBox", "어두운 모드", "dark-mode"))],
+                dark);
             var surface = new WindowsSemanticWorkflowSurface();
 
             var result = new SemanticWorkflowRunner().Run(workflow, surface);
@@ -135,4 +131,43 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
 
     private static SemanticTargetSelector Selector(string role, string name, string automationId) =>
         new([role], name, automationId);
+
+    private static RecordedEvent RecordedClick(
+        long sequence,
+        double offset,
+        SemanticDemonstrationFrame before,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "왼쪽 클릭",
+            ActionKind = MacroActionKind.MouseLeftClick,
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticTarget = target,
+        };
+
+    private static RecordedEvent RecordedKey(
+        long sequence,
+        double offset,
+        KeyCode key,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "키보드",
+            Message = $"키 입력 · {key}",
+            ActionKind = MacroActionKind.KeyStroke,
+            KeyCodes = [key],
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
 }

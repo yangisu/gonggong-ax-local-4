@@ -1,4 +1,5 @@
 using Series4.Desktop;
+using SharpHook.Data;
 using Xunit;
 
 namespace Series4.Desktop.Tests;
@@ -175,6 +176,64 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedKeystrokes_AreGroupedByObservedEditorValueAndReproduceTheVisibleText()
+    {
+        WithVideo(video =>
+        {
+            var start = Frame("start", .2, Element("Button", "새 메모", "new"));
+            var empty = Frame("key-empty", .6, Element("Edit", "메모 내용", "editor", ""));
+            var one = Frame("key-one", .72, Element("Edit", "메모 내용", "editor", "회"));
+            var two = Frame("key-two", .84, Element("Edit", "메모 내용", "editor", "회의"));
+            var typed = Frame("key-three", .96, Element("Edit", "메모 내용", "editor", "회의록"));
+            var final = Frame("final", 1.3,
+                Element("Edit", "메모 내용", "editor", "회의록"),
+                Element("Text", "저장됨", "saved"));
+            var target = Selector("Edit", "메모 내용", "editor");
+            var recorded = new[]
+            {
+                RecordedClick(1, .3, start, Selector("Button", "새 메모", "new")),
+                RecordedKey(2, .65, KeyCode.VcH, empty, one, target),
+                RecordedKey(3, .77, KeyCode.VcO, one, two, target),
+                RecordedKey(4, .89, KeyCode.VcI, two, typed, target),
+            };
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "새 메모를 만들고 회의록을 입력해 줘", video, 1.5, recorded, final);
+            var surface = new WorkflowFrameSurface([start, empty, final]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            Assert.Equal("회의록", surface.Current.Elements.Single(element => element.AutomationId == "editor").Value);
+            Assert.Equal(["recorded-1", "recorded-2"], surface.ExecutedSteps);
+            Assert.Equal([1, 2, 3], workflow.Steps[1].Evidence.EventIndices);
+            Assert.Equal(1, workflow.EvidenceCoverage.Coverage);
+        });
+    }
+
+    [Fact]
+    public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
+    {
+        WithVideo(video =>
+        {
+            var before = Frame("before", .3, Element("Edit", "비밀번호", "password", ""));
+            var after = Frame("after", .5, Element("Edit", "비밀번호", "password", "x"));
+            var sensitive = RecordedKey(1, .4, KeyCode.VcX, before, after, Selector("Edit", "비밀번호", "password"));
+            var final = Frame("final", .8, Element("Edit", "비밀번호", "password", "x"));
+            var error = Assert.Throws<InvalidOperationException>(() => RecordedSemanticWorkflowExtractor.Compile(
+                "암호를 입력해 줘", video, 1, [sensitive], final));
+            Assert.Contains("민감 입력", error.Message);
+
+            var ordinaryBefore = Frame("ordinary-before", .3, Element("Edit", "검색", "search", ""));
+            var ordinaryAfter = Frame("ordinary-after", .5, Element("Edit", "검색", "search", "v"));
+            var modified = RecordedKey(2, .4, KeyCode.VcV, ordinaryBefore, ordinaryAfter, Selector("Edit", "검색", "search"));
+            modified.ModifierKeyCodes = [KeyCode.VcLeftControl];
+            var modifiedError = Assert.Throws<InvalidOperationException>(() => RecordedSemanticWorkflowExtractor.Compile(
+                "검색어를 입력해 줘", video, 1, [modified], ordinaryAfter));
+            Assert.Contains("Ctrl/Alt/Win", modifiedError.Message);
+        });
+    }
+
+    [Fact]
     public async Task SemanticRecordingEvidence_SurvivesProjectSaveAndReload()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"series4-semantic-{Guid.NewGuid():N}");
@@ -239,6 +298,28 @@ public sealed class SemanticWorkflowExperienceTests
             CaptureHeight = 1080,
             SemanticBefore = before,
             SemanticTarget = target,
+        };
+
+    private static RecordedEvent RecordedKey(
+        long sequence,
+        double offset,
+        KeyCode key,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "키보드",
+            Message = $"키 입력 · {key}",
+            ActionKind = MacroActionKind.KeyStroke,
+            KeyCodes = [key],
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
         };
 
     private static void WithVideo(Action<string> action)

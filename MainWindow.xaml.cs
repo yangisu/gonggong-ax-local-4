@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -62,6 +63,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer videoTimer;
     private readonly DispatcherTimer projectSaveTimer;
     private readonly HashSet<KeyCode> pressedKeys = [];
+    private readonly Dictionary<KeyCode, Guid> pendingSemanticKeyCaptures = [];
+    private readonly ConcurrentDictionary<Guid, SemanticDemonstrationFrame> pendingSemanticAfters = [];
     private readonly Dictionary<MouseButton, PendingMousePress> pendingMousePresses = [];
     private readonly object pendingMouseGate = new();
     private readonly EventSimulator eventSimulator = new();
@@ -336,6 +339,8 @@ public partial class MainWindow : Window
             isPlaying = false;
             PlayPauseButton.Content = "▶ 재생";
             pressedKeys.Clear();
+            pendingSemanticKeyCaptures.Clear();
+            pendingSemanticAfters.Clear();
             RefreshCaptureBounds();
 
             pendingVideoPath = CreateVideoPath();
@@ -1015,6 +1020,33 @@ public partial class MainWindow : Window
 
         var keyChord = FormatKeyChord(e.Data.KeyCode);
         var keyCodes = BuildKeyChordCodes(e.Data.KeyCode);
+        SemanticDemonstrationFrame? semanticBefore = null;
+        SemanticTargetSelector? semanticTarget = null;
+        Guid? semanticCaptureId = null;
+        try
+        {
+            var semantic = WindowsSemanticWorkflowSurface.CaptureFocusedDemonstrationFrame(
+                $"session-{recordingSessionId}-key-{recordingClock.ElapsedTicks}",
+                recordingClock.Elapsed.TotalSeconds);
+            semanticBefore = semantic.Frame;
+            semanticTarget = semantic.Target;
+            if (semanticTarget is not null)
+            {
+                lock (pressedKeys)
+                {
+                    if (!pendingSemanticKeyCaptures.TryGetValue(e.Data.KeyCode, out var captureId))
+                    {
+                        captureId = Guid.NewGuid();
+                        pendingSemanticKeyCaptures[e.Data.KeyCode] = captureId;
+                    }
+                    semanticCaptureId = captureId;
+                }
+            }
+        }
+        catch
+        {
+            // Raw key recording remains available; semantic compilation will reject missing evidence.
+        }
         var isNavigationChord =
             e.Data.KeyCode == KeyCode.VcTab
             && keyCodes.Any(
@@ -1032,6 +1064,9 @@ public partial class MainWindow : Window
             actionKind: MacroActionKind.KeyStroke,
             actionText: keyChord,
             keyCodes: keyCodes,
+            semanticBefore: semanticBefore,
+            semanticTarget: semanticTarget,
+            semanticCaptureId: semanticCaptureId,
             reviewWarningText: isNavigationChord
                 ? "창 전환 키가 포함되어 있습니다. 이후 입력 대상 창을 확인하세요."
                 : null
@@ -1041,10 +1076,40 @@ public partial class MainWindow : Window
     private void GlobalHook_KeyReleased(object? sender, KeyboardHookEventArgs e)
     {
         captureDiagnostics.RecordRawInput(DateTimeOffset.Now);
+        Guid? semanticCaptureId = null;
         lock (pressedKeys)
         {
             pressedKeys.Remove(e.Data.KeyCode);
+            if (pendingSemanticKeyCaptures.Remove(e.Data.KeyCode, out var captureId))
+                semanticCaptureId = captureId;
         }
+        if (semanticCaptureId is not Guid id) return;
+        try
+        {
+            var after = WindowsSemanticWorkflowSurface.CaptureFocusedDemonstrationFrame(
+                $"session-{recordingSessionId}-key-after-{recordingClock.ElapsedTicks}",
+                recordingClock.Elapsed.TotalSeconds).Frame;
+            pendingSemanticAfters[id] = after;
+            Dispatcher.BeginInvoke(() => ApplySemanticAfter(id, after), DispatcherPriority.Background);
+        }
+        catch
+        {
+            // A missing after-state leaves this key ineligible for semantic extraction.
+        }
+    }
+
+    private void ApplySemanticAfter(Guid captureId, SemanticDemonstrationFrame after)
+    {
+        var changed = false;
+        foreach (var recordedEvent in RecordedEvents.Where(item => item.SemanticCaptureId == captureId))
+        {
+            recordedEvent.SemanticAfter = after;
+            changed = true;
+        }
+        if (!changed) return;
+        pendingSemanticAfters.TryRemove(captureId, out _);
+        projectRevision++;
+        ScheduleProjectSave();
     }
 
     private bool IsEmergencyStopPressed()
@@ -1200,7 +1265,8 @@ public partial class MainWindow : Window
         TimeSpan? dragDuration = null,
         MousePathPoint[]? mousePath = null,
         SemanticDemonstrationFrame? semanticBefore = null,
-        SemanticTargetSelector? semanticTarget = null
+        SemanticTargetSelector? semanticTarget = null,
+        Guid? semanticCaptureId = null
     )
     {
         var queue = hookEventQueue;
@@ -1238,7 +1304,8 @@ public partial class MainWindow : Window
                 dragDuration,
                 mousePath?.ToArray() ?? [],
                 semanticBefore,
-                semanticTarget
+                semanticTarget,
+                semanticCaptureId
             )
         );
         if (enqueued)
@@ -1272,7 +1339,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        AddEvent(
+        var recordedEvent = AddEvent(
             snapshot.Category,
             snapshot.Message,
             snapshot.Offset,
@@ -1298,12 +1365,16 @@ public partial class MainWindow : Window
             snapshot.DragDuration,
             snapshot.MousePath,
             snapshot.SemanticBefore,
-            snapshot.SemanticTarget
+            snapshot.SemanticTarget,
+            snapshot.SemanticCaptureId
         );
+        if (recordedEvent.SemanticCaptureId is Guid captureId
+            && pendingSemanticAfters.TryRemove(captureId, out var semanticAfter))
+            recordedEvent.SemanticAfter = semanticAfter;
         captureDiagnostics.RecordCommitted();
     }
 
-    private void AddEvent(
+    private RecordedEvent AddEvent(
         string category,
         string message,
         TimeSpan? offset = null,
@@ -1329,7 +1400,8 @@ public partial class MainWindow : Window
         TimeSpan? dragDuration = null,
         MousePathPoint[]? mousePath = null,
         SemanticDemonstrationFrame? semanticBefore = null,
-        SemanticTargetSelector? semanticTarget = null
+        SemanticTargetSelector? semanticTarget = null,
+        Guid? semanticCaptureId = null
     )
     {
         var recordedEvent = new RecordedEvent
@@ -1361,6 +1433,7 @@ public partial class MainWindow : Window
             CaptureHeight = eventCaptureHeight ?? captureHeight,
             SemanticBefore = semanticBefore,
             SemanticTarget = semanticTarget,
+            SemanticCaptureId = semanticCaptureId,
         };
 
         ApplyEventPolicy(recordedEvent);
@@ -1368,6 +1441,7 @@ public partial class MainWindow : Window
         UpdateEventLogUi();
         EventLogList.ScrollIntoView(recordedEvent);
         ScheduleProjectSave();
+        return recordedEvent;
     }
 
     private void InsertEventChronologically(RecordedEvent recordedEvent)
@@ -3359,6 +3433,10 @@ public partial class MainWindow : Window
         {
             pendingMousePresses.Clear();
         }
+        lock (pressedKeys)
+        {
+            pendingSemanticKeyCaptures.Clear();
+        }
     }
 
     private void SetRecordingUi(bool recording)
@@ -4515,7 +4593,8 @@ public partial class MainWindow : Window
         TimeSpan? DragDuration,
         MousePathPoint[] MousePath,
         SemanticDemonstrationFrame? SemanticBefore,
-        SemanticTargetSelector? SemanticTarget
+        SemanticTargetSelector? SemanticTarget,
+        Guid? SemanticCaptureId
     );
 
     [StructLayout(LayoutKind.Sequential)]

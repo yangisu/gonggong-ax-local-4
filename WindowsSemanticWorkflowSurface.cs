@@ -116,6 +116,46 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             target);
     }
 
+    public static (SemanticDemonstrationFrame Frame, SemanticTargetSelector? Target) CaptureFocusedDemonstrationFrame(
+        string id,
+        double offsetSeconds)
+    {
+        var root = ForegroundRoot();
+        var processId = root.Current.ProcessId;
+        if (processId == Environment.ProcessId || processId == (int)MainWindow.BridgeParentPid)
+            throw new InvalidOperationException("자동화 호스트 자체는 시연 대상으로 사용할 수 없습니다.");
+        string process;
+        try { process = Process.GetProcessById(processId).ProcessName; }
+        catch { process = string.Empty; }
+        var element = AutomationElement.FocusedElement;
+        SemanticTargetSelector? target = null;
+        SemanticElementEvidence[] elements = [];
+        if (element is not null
+            && element.Current.ProcessId == processId
+            && element.Current.IsEnabled
+            && !element.Current.IsPassword
+            && !string.IsNullOrWhiteSpace(element.Current.Name))
+        {
+            var automationId = element.Current.AutomationId ?? string.Empty;
+            var role = Role(element);
+            var value = ReadValue(element);
+            target = new SemanticTargetSelector(
+                [role], element.Current.Name,
+                string.IsNullOrWhiteSpace(automationId) ? null : automationId,
+                element.Current.IsOffscreen);
+            elements =
+            [
+                new SemanticElementEvidence(
+                    role, element.Current.Name, automationId, value,
+                    element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword),
+            ];
+        }
+        return (
+            new SemanticDemonstrationFrame(
+                id, offsetSeconds, process, root.Current.Name ?? string.Empty, string.Empty, elements),
+            target);
+    }
+
     public void Execute(SemanticPlannedAction action, SemanticWorkflowObservation observation)
     {
         var current = Observe();

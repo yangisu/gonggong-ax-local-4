@@ -1,0 +1,18 @@
+{
+  "executedAt": "2026-10-04T13:15:03.1990637+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook input events + automatic UI Automation evidence",
+  "intent": "새 메모를 만들고 meeting을 입력해 줘",
+  "recordedEventCount": 8,
+  "meaningfulKeyEventCount": 7,
+  "workflowStepCount": 1,
+  "evidenceCoverage": 1.0,
+  "sourceVideoSha256": "ab651af390241e5ea5677a690198ace8b4940cd9e09a0d325005150b31177ac9",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "editorValue": "meeting",
+    "status": "저장됨"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-to-semantic-workflow (local, ignored by git)"
+}
