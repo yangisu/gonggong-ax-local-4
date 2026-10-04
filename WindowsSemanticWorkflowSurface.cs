@@ -83,38 +83,35 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         double screenX,
         double screenY)
     {
+        var observation = ObserveOnce();
         var root = ForegroundRoot();
         var processId = root.Current.ProcessId;
-        if (processId == Environment.ProcessId || processId == (int)MainWindow.BridgeParentPid)
-            throw new InvalidOperationException("자동화 호스트 자체는 시연 대상으로 사용할 수 없습니다.");
-        string process;
-        try { process = Process.GetProcessById(processId).ProcessName; }
-        catch { process = string.Empty; }
         var element = AutomationElement.FromPoint(new System.Windows.Point(screenX, screenY));
+        AutomationElement? fallback = null;
         SemanticTargetSelector? target = null;
-        SemanticElementEvidence[] elements = [];
-        if (element is not null
-            && element.Current.ProcessId == processId
-            && !element.Current.IsPassword
-            && !string.IsNullOrWhiteSpace(element.Current.Name))
+        while (element is not null && element.Current.ProcessId == processId)
         {
-            var automationId = element.Current.AutomationId ?? string.Empty;
-            target = new SemanticTargetSelector(
-                [Role(element)],
-                element.Current.Name,
-                string.IsNullOrWhiteSpace(automationId) ? null : automationId,
-                element.Current.IsOffscreen);
-            elements =
-            [
-                new SemanticElementEvidence(
-                    Role(element), element.Current.Name, automationId, ReadValue(element),
-                    element.Current.IsEnabled, element.Current.IsOffscreen, element.Current.IsPassword),
-            ];
+            if (!element.Current.IsPassword && !string.IsNullOrWhiteSpace(element.Current.Name))
+            {
+                fallback ??= element;
+                if (IsActionablePointerTarget(element))
+                {
+                    fallback = element;
+                    break;
+                }
+            }
+            element = TreeWalker.ControlViewWalker.GetParent(element);
         }
-        return (
-            new SemanticDemonstrationFrame(
-                id, offsetSeconds, process, root.Current.Name ?? string.Empty, string.Empty, elements),
-            target);
+        if (fallback is not null)
+        {
+            var automationId = fallback.Current.AutomationId ?? string.Empty;
+            target = new SemanticTargetSelector(
+                [Role(fallback)],
+                fallback.Current.Name,
+                string.IsNullOrWhiteSpace(automationId) ? null : automationId,
+                fallback.Current.IsOffscreen);
+        }
+        return (ToFrame(id, offsetSeconds, observation), target);
     }
 
     public static (SemanticDemonstrationFrame Frame, SemanticTargetSelector? Target) CaptureFocusedDemonstrationFrame(
@@ -245,6 +242,18 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                         command.Axis == "horizontal" ? increment : ScrollAmount.NoAmount,
                         command.Axis == "vertical" ? increment : ScrollAmount.NoAmount);
                 break;
+            case "set-range":
+                if (!SemanticRangeValue.TryParse(action.Value, out var rangeValue))
+                    throw new InvalidOperationException("범위 조절 값이 올바르지 않습니다.");
+                if (!element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
+                    throw new InvalidOperationException("TARGET_MISMATCH: 대상이 의미 기반 범위 조절을 지원하지 않습니다.");
+                var range = (RangeValuePattern)rangePattern;
+                if (range.Current.IsReadOnly
+                    || rangeValue < range.Current.Minimum
+                    || rangeValue > range.Current.Maximum)
+                    throw new InvalidOperationException("TARGET_MISMATCH: 범위 조절 값이 현재 대상의 허용 범위를 벗어났습니다.");
+                range.SetValue(rangeValue);
+                break;
             default:
                 throw new InvalidOperationException($"지원하지 않는 의미 동작입니다: {action.Kind}");
         }
@@ -366,6 +375,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             }
             if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
+            if (element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
+                return ((RangeValuePattern)rangePattern).Current.Value.ToString("R", CultureInfo.InvariantCulture);
             if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
             {
                 var current = ((ScrollPattern)scrollPattern).Current;
@@ -438,6 +449,16 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         if (!SetCursorPos(x, y)) throw new InvalidOperationException("마우스 포인터를 의미 대상에 이동하지 못했습니다.");
         mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
         mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    private static bool IsActionablePointerTarget(AutomationElement element)
+    {
+        var role = Role(element);
+        if (role == "Slider" && element.TryGetCurrentPattern(RangeValuePattern.Pattern, out _)) return true;
+        return element.TryGetCurrentPattern(InvokePattern.Pattern, out _)
+            || element.TryGetCurrentPattern(TogglePattern.Pattern, out _)
+            || element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out _)
+            || element.TryGetCurrentPattern(ValuePattern.Pattern, out _);
     }
 
     private static bool SameProcess(string left, string right) =>

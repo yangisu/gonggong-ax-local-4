@@ -134,6 +134,33 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
         });
     }
 
+    [WindowsIntegrationFact]
+    public void RecordedSliderDrag_ProducesTheDemonstratedRangeValueInARealWindow()
+    {
+        RunWithFixture("slider", video =>
+        {
+            var target = Selector("Slider", "음량", "volume-slider");
+            var before = Frame("range-before", .3,
+                Element("Slider", "음량", "volume-slider", "20"),
+                Element("Text", "음량 20", "volume-status"));
+            var after = Frame("range-after", .8,
+                Element("Slider", "음량", "volume-slider", "75"),
+                Element("Text", "음량 75", "volume-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "음량을 75로 높여 줘", video, 1.2,
+                [RecordedDrag(1, .5, before, after, target)],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Contains(visible.Elements, element => element.AutomationId == "volume-slider" && element.Value == "75");
+            Assert.Contains(visible.Elements, element => element.Name == "음량 75");
+        });
+    }
+
     private static void RunWithFixture(string mode, Action<string> test)
     {
         var executable = FixtureExecutable();
@@ -242,6 +269,28 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
             Message = "휠 아래로",
             ActionKind = MacroActionKind.MouseWheel,
             WheelRotation = rotation,
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static RecordedEvent RecordedDrag(
+        long sequence,
+        double offset,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "왼쪽 드래그",
+            ActionKind = MacroActionKind.MouseDrag,
+            DragButton = MouseButton.Button1,
+            DragDuration = TimeSpan.FromMilliseconds(400),
             Sequence = sequence,
             CaptureWidth = 1920,
             CaptureHeight = 1080,

@@ -211,6 +211,30 @@ internal static class SemanticUiBridge
             ((ValuePattern)valuePattern).SetValue(text);
             method = "uia-value";
         }
+        else if (action == "set-range")
+        {
+            if (!SemanticRangeValue.TryParse(text, out var rangeValue)
+                || !element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
+                throw new InvalidOperationException("TARGET_MISMATCH: target does not support the requested range value.");
+            var range = (RangeValuePattern)rangePattern;
+            if (range.Current.IsReadOnly || rangeValue < range.Current.Minimum || rangeValue > range.Current.Maximum)
+                throw new InvalidOperationException("TARGET_MISMATCH: range value is outside the current target bounds.");
+            range.SetValue(rangeValue);
+            method = "uia-range-value";
+        }
+        else if (action == "scroll")
+        {
+            if (!SemanticScrollCommand.TryParse(text, out var scrollCommand)
+                || !element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
+                throw new InvalidOperationException("TARGET_MISMATCH: target does not support the requested semantic scroll.");
+            var scroll = (ScrollPattern)scrollPattern;
+            var increment = scrollCommand.Direction == "increment" ? ScrollAmount.SmallIncrement : ScrollAmount.SmallDecrement;
+            for (var index = 0; index < scrollCommand.Count; index++)
+                scroll.Scroll(
+                    scrollCommand.Axis == "horizontal" ? increment : ScrollAmount.NoAmount,
+                    scrollCommand.Axis == "vertical" ? increment : ScrollAmount.NoAmount);
+            method = "uia-scroll";
+        }
         else if (action == "toggle" && element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
         {
             ((TogglePattern)togglePattern).Toggle();
@@ -347,6 +371,8 @@ internal static class SemanticUiBridge
             }
             if (element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
+            if (element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
+                return ((RangeValuePattern)rangePattern).Current.Value.ToString("R", CultureInfo.InvariantCulture);
             if (element.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
             {
                 var current = ((ScrollPattern)scrollPattern).Current;

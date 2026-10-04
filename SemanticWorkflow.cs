@@ -1,4 +1,5 @@
 using System.IO;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -113,6 +114,15 @@ public sealed record SemanticScrollCommand(string Axis, string Direction, int Co
     }
 }
 
+public static class SemanticRangeValue
+{
+    public static bool TryParse(string? value, out double parsed) =>
+        double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed)
+        && double.IsFinite(parsed);
+
+    public static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);
+}
+
 public sealed record SemanticWorkflowStepDefinition(
     string Id,
     string FromStateId,
@@ -187,7 +197,7 @@ public static class SemanticWorkflowCompiler
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "select", "toggle", "scroll",
+        "click", "type", "select", "toggle", "scroll", "set-range",
     };
 
     private static readonly string[] IrreversibleTerms =
@@ -235,6 +245,8 @@ public static class SemanticWorkflowCompiler
                 throw new InvalidOperationException($"단계 {action.Id}에 입력 값이 없습니다.");
             if (action.Kind == "scroll" && !SemanticScrollCommand.TryParse(action.Value, out _))
                 throw new InvalidOperationException($"단계 {action.Id}의 스크롤 값이 올바르지 않습니다.");
+            if (action.Kind == "set-range" && !SemanticRangeValue.TryParse(action.Value, out _))
+                throw new InvalidOperationException($"단계 {action.Id}의 범위 조절 값이 올바르지 않습니다.");
             if (!frameById.TryGetValue(action.BeforeFrameId, out var beforeItems)
                 || !frameById.TryGetValue(action.AfterFrameId, out var afterItems))
                 throw new InvalidOperationException($"단계 {action.Id}가 존재하지 않는 화면 증거를 참조합니다.");

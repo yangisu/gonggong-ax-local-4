@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 4,
-  "passed": 4,
+  "total": 5,
+  "passed": 5,
   "failed": 0,
   "scenarios": [
     {
@@ -38,6 +38,15 @@
       "visibleUserOutcome": {
         "toggleValue": "On",
         "status": "어두운 모드 사용 중"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "음량을 75로 높여 줘",
+      "workflowSource": "semantic demonstration with a synchronized slider drag and RangeValue evidence",
+      "visibleUserOutcome": {
+        "sliderValue": "75",
+        "status": "음량 75"
       },
       "result": "PASS"
     }

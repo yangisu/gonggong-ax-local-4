@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Interop;
 using System.Runtime.InteropServices;
@@ -23,12 +24,13 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo";
+        var selfDemonstrating = mode is "editor-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
             "settings" or "keyboard-demo" => SettingsContent(),
             "scroll" or "scroll-demo" => ScrollContent(),
+            "slider" or "slider-demo" => SliderContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
@@ -73,6 +75,30 @@ public static class Program
                         keybd_event(0x20, 0, 0, UIntPtr.Zero);
                         Thread.Sleep(120);
                         keybd_event(0x20, 0, KeyUp, UIntPtr.Zero);
+                    });
+                    return;
+                }
+                if (mode == "slider-demo")
+                {
+                    var slider = FindDescendant<Slider>(window)
+                        ?? throw new InvalidOperationException("음량 슬라이더를 찾지 못했습니다.");
+                    slider.ApplyTemplate();
+                    var thumb = FindDescendant<Thumb>(slider)
+                        ?? throw new InvalidOperationException("음량 슬라이더 조절점을 찾지 못했습니다.");
+                    var start = thumb.PointToScreen(new Point(thumb.ActualWidth / 2, thumb.ActualHeight / 2));
+                    var end = slider.PointToScreen(new Point(slider.ActualWidth * .75, slider.ActualHeight / 2));
+                    SetCursorPos((int)Math.Round(start.X), (int)Math.Round(start.Y));
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero);
+                        for (var step = 1; step <= 8; step++)
+                        {
+                            var x = start.X + (end.X - start.X) * step / 8;
+                            SetCursorPos((int)Math.Round(x), (int)Math.Round(end.Y));
+                            Thread.Sleep(50);
+                        }
+                        mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero);
                     });
                     return;
                 }
@@ -193,6 +219,31 @@ public static class Program
             AutomationProperties.SetName(status, status.Text);
         }));
         panel.Children.Add(list);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement SliderContent()
+    {
+        var panel = Panel("소리 설정");
+        var status = Named(new TextBlock { Text = "음량 20", FontSize = 18 }, "volume-status", "음량 20");
+        var slider = Named(new Slider
+        {
+            Width = 440,
+            Height = 44,
+            Minimum = 0,
+            Maximum = 100,
+            Value = 20,
+            TickFrequency = 5,
+            IsSnapToTickEnabled = true,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        }, "volume-slider", "음량");
+        slider.ValueChanged += (_, _) =>
+        {
+            status.Text = $"음량 {slider.Value:0}";
+            AutomationProperties.SetName(status, status.Text);
+        };
+        panel.Children.Add(slider);
         panel.Children.Add(status);
         return panel;
     }

@@ -178,6 +178,28 @@ public static class RecordedSemanticWorkflowExtractor
                 continue;
             }
 
+            if (current.Event.ActionKind == MacroActionKind.MouseDrag)
+            {
+                RequireRangeDragEvidence(current.Event);
+                var after = current.Event.SemanticAfter
+                    ?? throw new InvalidOperationException("드래그 뒤 의미 범위 값을 확인할 수 없습니다.");
+                var beforeValue = TargetValue(current.Event.SemanticBefore!, current.Event.SemanticTarget!);
+                var afterValue = TargetValue(after, current.Event.SemanticTarget!);
+                if (!SemanticRangeValue.TryParse(beforeValue, out var initial)
+                    || !SemanticRangeValue.TryParse(afterValue, out var final)
+                    || initial == final)
+                    throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 드래그 결과 값을 의미적으로 확인할 수 없습니다.");
+                units.Add(new ExtractedUnit(
+                    [current],
+                    "set-range",
+                    current.Event.SemanticTarget!,
+                    SemanticRangeValue.Format(final),
+                    current.Event.SemanticBefore!,
+                    after));
+                index++;
+                continue;
+            }
+
             if (current.Event.ActionKind == MacroActionKind.MouseWheel)
             {
                 RequireScrollEvidence(current.Event);
@@ -316,6 +338,18 @@ public static class RecordedSemanticWorkflowExtractor
             throw new InvalidOperationException($"이벤트 {item.Sequence}의 스크롤 방향을 확인할 수 없습니다.");
         if (item.ModifierKeyCodes.Length > 0)
             throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 스크롤은 자동 변환하지 않습니다.");
+    }
+
+    private static void RequireRangeDragEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 드래그 전후 의미 증거가 없습니다.");
+        if (item.DragButton != MouseButton.Button1)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 범위 조절은 왼쪽 버튼 드래그만 지원합니다.");
+        if (item.ModifierKeyCodes.Length > 0)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 드래그는 자동 변환하지 않습니다.");
+        if (!item.SemanticTarget.Roles.Any(role => role == "Slider"))
+            throw new InvalidOperationException($"이벤트 {item.Sequence}는 의미 값을 제공하는 슬라이더 드래그가 아닙니다.");
     }
 
     private static bool SameTextTarget(RecordedEvent first, RecordedEvent second) =>

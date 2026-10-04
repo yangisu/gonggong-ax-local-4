@@ -1,0 +1,23 @@
+{
+  "executedAt": "2026-10-04T14:02:57.4339572+09:00",
+  "environment": "Interactive Windows desktop, .NET 10 WPF",
+  "source": "actual ScreenRecorderLib MP4 + SharpHook slider drag + automatic UI Automation evidence",
+  "intent": "음량을 높여 줘",
+  "recordedEventCount": 2,
+  "meaningfulDragEventCount": 1,
+  "workflowStepCount": 1,
+  "workflowAction": "set-range",
+  "workflowValue": "75",
+  "evidenceCoverage": 1.0,
+  "videoEvidenceCoverage": 1.0,
+  "videoEvidenceFrameCount": 4,
+  "sourceVideoIntegrityCheckedBeforeRun": true,
+  "sourceVideoSha256": "30f5a177094417409fa2ff03f4490650306505352ac6162be9cd93b637cb569c",
+  "runStatus": "SUCCESS",
+  "visibleUserOutcome": {
+    "sliderValue": "75",
+    "status": "음량 75"
+  },
+  "passed": true,
+  "rawArtifacts": "artifacts/recording-slider-workflow (local, ignored by git)"
+}

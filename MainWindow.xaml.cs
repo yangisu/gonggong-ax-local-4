@@ -930,6 +930,10 @@ public partial class MainWindow : Window
         var dragDuration = releaseOffset >= pending.Offset
             ? releaseOffset - pending.Offset
             : TimeSpan.Zero;
+        var semanticCaptureId = isDrag
+            && pending.SemanticTarget?.Roles.Any(role => role == "Slider") == true
+                ? Guid.NewGuid()
+                : (Guid?)null;
         AddEventFromHook(
             "마우스",
             isDrag
@@ -947,8 +951,30 @@ public partial class MainWindow : Window
             dragDuration: isDrag ? dragDuration : null,
             mousePath: mousePath,
             semanticBefore: pending.SemanticBefore,
-            semanticTarget: pending.SemanticTarget
+            semanticTarget: pending.SemanticTarget,
+            semanticCaptureId: semanticCaptureId
         );
+        if (semanticCaptureId is Guid captureId)
+            _ = CapturePointerSemanticAfterAsync(captureId, e.Data.X, e.Data.Y);
+    }
+
+    private async Task CapturePointerSemanticAfterAsync(Guid captureId, int screenX, int screenY)
+    {
+        try
+        {
+            await Task.Delay(250);
+            var after = WindowsSemanticWorkflowSurface.CapturePointDemonstrationFrame(
+                $"session-{recordingSessionId}-pointer-after-{recordingClock.ElapsedTicks}",
+                recordingClock.Elapsed.TotalSeconds,
+                screenX,
+                screenY).Frame;
+            pendingSemanticAfters[captureId] = after;
+            await Dispatcher.InvokeAsync(() => ApplySemanticAfter(captureId, after), DispatcherPriority.Background);
+        }
+        catch
+        {
+            // A missing after-state leaves this drag event ineligible for semantic extraction.
+        }
     }
 
     private void GlobalHook_MouseWheel(object? sender, MouseWheelHookEventArgs e)

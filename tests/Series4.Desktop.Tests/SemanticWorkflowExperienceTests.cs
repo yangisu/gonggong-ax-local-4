@@ -377,6 +377,57 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedSliderDrag_BecomesASetRangeActionWithAVisibleUserOutcome()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Slider", "음량", "volume-slider");
+            var before = Frame("range-before", .3,
+                Element("Slider", "음량", "volume-slider", "20"),
+                Element("Text", "음량 20", "volume-status"));
+            var after = Frame("range-after", .8,
+                Element("Slider", "음량", "volume-slider", "75"),
+                Element("Text", "음량 75", "volume-status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "음량을 75로 높여 줘",
+                video,
+                1.2,
+                [RecordedDrag(1, .5, before, after, target)],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("set-range", step.Action.Kind);
+            Assert.Equal("75", step.Action.Value);
+            Assert.Contains(surface.Current.Elements, element => element.Name == "음량 75");
+        });
+    }
+
+    [Fact]
+    public void CanvasDragWithoutASemanticRangeValue_IsRejected()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("Pane", "그리기 영역", "canvas");
+            var before = Frame("canvas-before", .3, Element("Pane", "그리기 영역", "canvas"));
+            var after = Frame("canvas-after", .8, Element("Pane", "그리기 영역", "canvas"));
+
+            var error = Assert.Throws<InvalidOperationException>(() =>
+                RecordedSemanticWorkflowExtractor.Compile(
+                    "선을 그어 줘",
+                    video,
+                    1.2,
+                    [RecordedDrag(1, .5, before, after, target)],
+                    after));
+
+            Assert.Contains("슬라이더 드래그", error.Message);
+        });
+    }
+
+    [Fact]
     public void RecordedSensitiveOrModifiedKeys_AreNotPromotedToUnattendedTextActions()
     {
         WithVideo(video =>
@@ -504,6 +555,28 @@ public sealed class SemanticWorkflowExperienceTests
             Message = "휠 아래로",
             ActionKind = MacroActionKind.MouseWheel,
             WheelRotation = rotation,
+            Sequence = sequence,
+            CaptureWidth = 1920,
+            CaptureHeight = 1080,
+            SemanticBefore = before,
+            SemanticAfter = after,
+            SemanticTarget = target,
+            SemanticCaptureId = Guid.NewGuid(),
+        };
+
+    private static RecordedEvent RecordedDrag(
+        long sequence,
+        double offset,
+        SemanticDemonstrationFrame before,
+        SemanticDemonstrationFrame after,
+        SemanticTargetSelector target) => new()
+        {
+            Offset = TimeSpan.FromSeconds(offset),
+            Category = "마우스",
+            Message = "왼쪽 드래그",
+            ActionKind = MacroActionKind.MouseDrag,
+            DragButton = MouseButton.Button1,
+            DragDuration = TimeSpan.FromMilliseconds(400),
             Sequence = sequence,
             CaptureWidth = 1920,
             CaptureHeight = 1080,
