@@ -2,8 +2,8 @@
   "executedAt": "2026-10-04",
   "environment": "Interactive Windows desktop, .NET 10 WPF, Windows UI Automation",
   "testSuite": "SemanticWorkflowWindowsIntegrationTests",
-  "total": 8,
-  "passed": 8,
+  "total": 9,
+  "passed": 9,
   "failed": 0,
   "scenarios": [
     {
@@ -56,6 +56,16 @@
       "visibleUserOutcome": {
         "sliderValue": "75",
         "status": "음량 75"
+      },
+      "result": "PASS"
+    },
+    {
+      "intent": "업무 B를 목록 마지막으로 이동해 줘",
+      "workflowSource": "semantic demonstration with synchronized list-item drag and before/after ordinal evidence",
+      "visibleUserOutcome": {
+        "movedItem": "업무 B",
+        "finalOrdinal": 3,
+        "status": "순서: A,C,D,B"
       },
       "result": "PASS"
     },

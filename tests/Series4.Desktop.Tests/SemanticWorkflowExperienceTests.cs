@@ -418,6 +418,46 @@ public sealed class SemanticWorkflowExperienceTests
     }
 
     [Fact]
+    public void RecordedListDrag_BecomesAReorderByFinalSemanticOrdinal()
+    {
+        WithVideo(video =>
+        {
+            var target = Selector("ListItem", "업무 B", "");
+            var before = Frame("order-before", .3,
+                Element("List", "우선순위 목록", "priority-list"),
+                Element("ListItem", "업무 A", "", "ordinal=0"),
+                Element("ListItem", "업무 B", "", "ordinal=1"),
+                Element("ListItem", "업무 C", "", "ordinal=2"),
+                Element("ListItem", "업무 D", "", "ordinal=3"),
+                Element("Text", "순서: A,B,C,D", "priority-status"));
+            var after = Frame("order-after", .9,
+                Element("List", "우선순위 목록", "priority-list"),
+                Element("ListItem", "업무 A", "", "ordinal=0"),
+                Element("ListItem", "업무 C", "", "ordinal=1"),
+                Element("ListItem", "업무 D", "", "ordinal=2"),
+                Element("ListItem", "업무 B", "", "ordinal=3"),
+                Element("Text", "순서: A,C,D,B", "priority-status"));
+
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "업무 B를 목록 마지막으로 이동해 줘",
+                video,
+                1.2,
+                [RecordedDrag(1, .5, before, after, target)],
+                after);
+            var surface = new WorkflowFrameSurface([before, after]);
+            var result = new SemanticWorkflowRunner().Run(workflow, surface, verificationDelay: TimeSpan.Zero);
+
+            Assert.Equal("SUCCESS", result.Status);
+            var step = Assert.Single(workflow.Steps);
+            Assert.Equal("reorder-item", step.Action.Kind);
+            Assert.Equal("3", step.Action.Value);
+            Assert.Contains(step.SuccessCondition.RequiredElements,
+                selector => selector.Name == "업무 B" && selector.ExpectedValue == "ordinal=3");
+            Assert.Contains(surface.Current.Elements, element => element.Name == "순서: A,C,D,B");
+        });
+    }
+
+    [Fact]
     public void CanvasDragWithoutASemanticRangeValue_IsRejected()
     {
         WithVideo(video =>
@@ -434,7 +474,7 @@ public sealed class SemanticWorkflowExperienceTests
                     [RecordedDrag(1, .5, before, after, target)],
                     after));
 
-            Assert.Contains("슬라이더 드래그", error.Message);
+            Assert.Contains("슬라이더 또는 목록", error.Message);
         });
     }
 

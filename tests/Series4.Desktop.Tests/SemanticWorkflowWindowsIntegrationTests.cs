@@ -198,6 +198,44 @@ public sealed class SemanticWorkflowWindowsIntegrationTests
     }
 
     [WindowsIntegrationFact]
+    public void RecordedListDrag_ReordersTheDemonstratedItemInARealWindow()
+    {
+        RunWithFixture("reorder", video =>
+        {
+            var target = Selector("ListItem", "업무 B", "");
+            var before = Frame("order-before", .3,
+                Element("List", "우선순위 목록", "priority-list"),
+                Element("ListItem", "업무 A", "", "ordinal=0"),
+                Element("ListItem", "업무 B", "", "ordinal=1"),
+                Element("ListItem", "업무 C", "", "ordinal=2"),
+                Element("ListItem", "업무 D", "", "ordinal=3"),
+                Element("Text", "순서: A,B,C,D", "priority-status"));
+            var after = Frame("order-after", .9,
+                Element("List", "우선순위 목록", "priority-list"),
+                Element("ListItem", "업무 A", "", "ordinal=0"),
+                Element("ListItem", "업무 C", "", "ordinal=1"),
+                Element("ListItem", "업무 D", "", "ordinal=2"),
+                Element("ListItem", "업무 B", "", "ordinal=3"),
+                Element("Text", "순서: A,C,D,B", "priority-status"));
+            var workflow = RecordedSemanticWorkflowExtractor.Compile(
+                "업무 B를 목록 마지막으로 이동해 줘",
+                video,
+                1.2,
+                [RecordedDrag(1, .5, before, after, target)],
+                after);
+            var surface = new WindowsSemanticWorkflowSurface();
+
+            var result = new SemanticWorkflowRunner().Run(workflow, surface);
+            var visible = surface.Observe();
+
+            Assert.True(result.Status == "SUCCESS", result.ToJson());
+            Assert.Contains(visible.Elements,
+                element => element.Role == "ListItem" && element.Name == "업무 B" && element.Value == "ordinal=3");
+            Assert.Contains(visible.Elements, element => element.Name == "순서: A,C,D,B");
+        });
+    }
+
+    [WindowsIntegrationFact]
     public void RecordedArrowNavigation_SelectsTheDemonstratedOptionInARealWindow()
     {
         RunWithFixture("selection", video =>

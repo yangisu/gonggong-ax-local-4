@@ -5,6 +5,8 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using System.Windows.Interop;
 using System.Runtime.InteropServices;
+using System.Collections.ObjectModel;
+using System.Windows.Input;
 
 namespace SemanticWorkflowFixture;
 
@@ -32,7 +34,7 @@ public static class Program
     {
         var mode = args.FirstOrDefault()?.ToLowerInvariant() ?? "note";
         var application = new Application();
-        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo";
+        var selfDemonstrating = mode is "editor-demo" or "korean-demo" or "scroll-demo" or "keyboard-demo" or "slider-demo" or "selection-demo" or "focus-demo" or "reorder-demo";
         Button? newNoteButton = null;
         var content = mode switch
         {
@@ -42,6 +44,7 @@ public static class Program
             "selection" or "selection-demo" => SelectionContent(),
             "focus" or "focus-demo" => FocusContent(),
             "korean" or "korean-demo" => KoreanEditorContent(),
+            "reorder" or "reorder-demo" => ReorderContent(),
             "editor" or "editor-demo" => NoteEditorContent(),
             _ => NoteStartContent(out newNoteButton),
         };
@@ -146,6 +149,33 @@ public static class Program
                             keybd_event(0x09, 0, KeyUp, UIntPtr.Zero);
                             Thread.Sleep(300);
                         }
+                    });
+                    return;
+                }
+                if (mode == "reorder-demo")
+                {
+                    var list = FindDescendant<ListBox>(window)
+                        ?? throw new InvalidOperationException("우선순위 목록을 찾지 못했습니다.");
+                    list.UpdateLayout();
+                    var source = list.ItemContainerGenerator.ContainerFromIndex(1) as ListBoxItem
+                        ?? throw new InvalidOperationException("이동할 업무 항목을 찾지 못했습니다.");
+                    var destination = list.ItemContainerGenerator.ContainerFromIndex(3) as ListBoxItem
+                        ?? throw new InvalidOperationException("목표 업무 위치를 찾지 못했습니다.");
+                    var start = source.PointToScreen(new Point(source.ActualWidth / 2, source.ActualHeight / 2));
+                    var end = destination.PointToScreen(new Point(destination.ActualWidth / 2, destination.ActualHeight / 2));
+                    SetCursorPos((int)Math.Round(start.X), (int)Math.Round(start.Y));
+                    await Task.Delay(300);
+                    await Task.Run(() =>
+                    {
+                        mouse_event(MouseLeftDown, 0, 0, 0, UIntPtr.Zero);
+                        for (var step = 1; step <= 10; step++)
+                        {
+                            var x = start.X + (end.X - start.X) * step / 10;
+                            var y = start.Y + (end.Y - start.Y) * step / 10;
+                            SetCursorPos((int)Math.Round(x), (int)Math.Round(y));
+                            Thread.Sleep(40);
+                        }
+                        mouse_event(MouseLeftUp, 0, 0, 0, UIntPtr.Zero);
                     });
                     return;
                 }
@@ -393,6 +423,53 @@ public static class Program
         panel.Children.Add(name);
         panel.Children.Add(email);
         panel.Children.Add(search);
+        panel.Children.Add(status);
+        return panel;
+    }
+
+    private static UIElement ReorderContent()
+    {
+        var panel = Panel("업무 우선순위");
+        var items = new ObservableCollection<string>(["업무 A", "업무 B", "업무 C", "업무 D"]);
+        var list = Named(new ListBox
+        {
+            Width = 360,
+            Height = 180,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            ItemsSource = items,
+        }, "priority-list", "우선순위 목록");
+        var status = Named(new TextBlock { Text = "순서: A,B,C,D", FontSize = 18 },
+            "priority-status", "순서: A,B,C,D");
+        ListBoxItem? pressedItem = null;
+        list.PreviewMouseLeftButtonDown += (_, args) =>
+        {
+            pressedItem = ItemsControl.ContainerFromElement(list, args.OriginalSource as DependencyObject) as ListBoxItem;
+        };
+        list.PreviewMouseLeftButtonUp += (_, args) =>
+        {
+            var releasedItem = ItemsControl.ContainerFromElement(list, args.OriginalSource as DependencyObject) as ListBoxItem;
+            if (pressedItem?.DataContext is not string source
+                || releasedItem?.DataContext is not string destination
+                || source == destination)
+            {
+                pressedItem = null;
+                return;
+            }
+            var sourceIndex = items.IndexOf(source);
+            var destinationIndex = items.IndexOf(destination);
+            if (sourceIndex < 0 || destinationIndex < 0)
+            {
+                pressedItem = null;
+                return;
+            }
+            items.RemoveAt(sourceIndex);
+            items.Insert(destinationIndex, source);
+            var order = string.Join(',', items.Select(item => item[^1]));
+            status.Text = $"순서: {order}";
+            AutomationProperties.SetName(status, status.Text);
+            pressedItem = null;
+        };
+        panel.Children.Add(list);
         panel.Children.Add(status);
         return panel;
     }

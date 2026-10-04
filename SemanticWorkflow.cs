@@ -125,6 +125,22 @@ public static class SemanticRangeValue
     public static string Format(double value) => value.ToString("R", CultureInfo.InvariantCulture);
 }
 
+public static class SemanticOrdinalValue
+{
+    public static bool TryParse(string? value, out int ordinal)
+    {
+        var candidate = value?.StartsWith("ordinal=", StringComparison.OrdinalIgnoreCase) == true
+            ? value[8..]
+            : value;
+        return int.TryParse(candidate, NumberStyles.None, CultureInfo.InvariantCulture, out ordinal)
+            && ordinal is >= 0 and <= 9999;
+    }
+
+    public static string Format(int ordinal) => ordinal.ToString(CultureInfo.InvariantCulture);
+
+    public static string FormatEvidence(int ordinal) => $"ordinal={Format(ordinal)}";
+}
+
 public sealed record SemanticWorkflowStepDefinition(
     string Id,
     string FromStateId,
@@ -199,7 +215,7 @@ public static class SemanticWorkflowCompiler
 {
     private static readonly HashSet<string> SupportedActions = new(StringComparer.OrdinalIgnoreCase)
     {
-        "click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus",
+        "click", "type", "select", "select-option", "toggle", "scroll", "set-range", "focus", "reorder-item",
     };
 
     private static readonly string[] IrreversibleTerms =
@@ -249,6 +265,8 @@ public static class SemanticWorkflowCompiler
                 throw new InvalidOperationException($"단계 {action.Id}의 스크롤 값이 올바르지 않습니다.");
             if (action.Kind == "set-range" && !SemanticRangeValue.TryParse(action.Value, out _))
                 throw new InvalidOperationException($"단계 {action.Id}의 범위 조절 값이 올바르지 않습니다.");
+            if (action.Kind == "reorder-item" && !SemanticOrdinalValue.TryParse(action.Value, out _))
+                throw new InvalidOperationException($"단계 {action.Id}의 목록 순서 값이 올바르지 않습니다.");
             if (!frameById.TryGetValue(action.BeforeFrameId, out var beforeItems)
                 || !frameById.TryGetValue(action.AfterFrameId, out var afterItems))
                 throw new InvalidOperationException($"단계 {action.Id}가 존재하지 않는 화면 증거를 참조합니다.");
@@ -308,10 +326,14 @@ public static class SemanticWorkflowCompiler
             var after = frameById[action.AfterFrameId][0];
             var precondition = BuildPredicate(before, previous: null, requiredTarget: action.Target);
             var nextTarget = index + 1 < demonstration.Actions.Count ? demonstration.Actions[index + 1].Target : null;
+            var successTarget = action.Kind.Equals("reorder-item", StringComparison.OrdinalIgnoreCase)
+                && SemanticOrdinalValue.TryParse(action.Value, out var finalOrdinal)
+                    ? action.Target! with { ExpectedValue = SemanticOrdinalValue.FormatEvidence(finalOrdinal) }
+                    : nextTarget;
             var success = BuildPredicate(
                 after,
                 before,
-                nextTarget,
+                successTarget,
                 action.Kind.Equals("scroll", StringComparison.OrdinalIgnoreCase) ? action.Target : null);
             if (!Distinguishes(success, before))
                 throw new InvalidOperationException($"단계 {action.Id} 이후의 의미 상태를 이전 상태와 구분할 근거가 없습니다.");

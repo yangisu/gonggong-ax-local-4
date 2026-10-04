@@ -271,6 +271,13 @@ internal static class SemanticUiBridge
             element.SetFocus();
             method = "uia-focus";
         }
+        else if (action == "reorder-item")
+        {
+            if (!SemanticOrdinalValue.TryParse(text, out var ordinal))
+                throw new ArgumentException("List ordinal is invalid.");
+            ReorderListItem(element, ordinal);
+            method = "semantic-list-reorder";
+        }
         else if (action == "toggle" && element.TryGetCurrentPattern(TogglePattern.Pattern, out var togglePattern))
         {
             ((TogglePattern)togglePattern).Toggle();
@@ -410,6 +417,8 @@ internal static class SemanticUiBridge
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
             if (element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
                 return ((RangeValuePattern)rangePattern).Current.Value.ToString("R", CultureInfo.InvariantCulture);
+            if (TryGetListItemOrdinal(element, out var ordinal))
+                return SemanticOrdinalValue.FormatEvidence(ordinal);
             if (element.TryGetCurrentPattern(SelectionPattern.Pattern, out var selectionPattern))
             {
                 var selection = ((SelectionPattern)selectionPattern).Current.GetSelection()
@@ -431,6 +440,98 @@ internal static class SemanticUiBridge
         catch (ElementNotAvailableException) { return string.Empty; }
         catch (InvalidOperationException) { return string.Empty; }
     }
+
+    private static void ReorderListItem(AutomationElement element, int finalOrdinal)
+    {
+        var siblings = ListItemsFor(element);
+        if (siblings.Length < 2 || finalOrdinal >= siblings.Length)
+            throw new InvalidOperationException("TARGET_MISMATCH: list ordinal is outside the current range.");
+        var runtime = RuntimeIdentity(element);
+        var currentOrdinal = Array.FindIndex(siblings,
+            item => string.Equals(RuntimeIdentity(item), runtime, StringComparison.Ordinal));
+        if (currentOrdinal < 0 || currentOrdinal == finalOrdinal)
+            throw new InvalidOperationException("TARGET_MISMATCH: list item is missing or already at the requested ordinal.");
+        var destination = siblings[finalOrdinal];
+        if (destination.Current.IsOffscreen)
+        {
+            if (!destination.TryGetCurrentPattern(ScrollItemPattern.Pattern, out var scroll))
+                throw new InvalidOperationException("TARGET_MISMATCH: destination list item cannot be revealed.");
+            ((ScrollItemPattern)scroll).ScrollIntoView();
+            Thread.Sleep(150);
+        }
+        var sourceBounds = element.Current.BoundingRectangle;
+        var destinationBounds = destination.Current.BoundingRectangle;
+        if (sourceBounds.IsEmpty || destinationBounds.IsEmpty
+            || sourceBounds.Width <= 1 || sourceBounds.Height <= 1
+            || destinationBounds.Width <= 1 || destinationBounds.Height <= 1)
+            throw new InvalidOperationException("TARGET_MISMATCH: list reorder bounds are unavailable.");
+        var startX = checked((int)Math.Round(sourceBounds.Left + sourceBounds.Width / 2));
+        var startY = checked((int)Math.Round(sourceBounds.Top + sourceBounds.Height / 2));
+        var endX = checked((int)Math.Round(destinationBounds.Left + destinationBounds.Width / 2));
+        var endY = checked((int)Math.Round(destinationBounds.Top + destinationBounds.Height / 2));
+        if (!SetCursorPos(startX, startY))
+            throw new InvalidOperationException("Could not position the pointer on the list item.");
+        mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
+        try
+        {
+            for (var step = 1; step <= 10; step++)
+            {
+                var x = startX + (endX - startX) * step / 10;
+                var y = startY + (endY - startY) * step / 10;
+                if (!SetCursorPos(x, y))
+                    throw new InvalidOperationException("Could not move the pointer along the list reorder path.");
+                Thread.Sleep(25);
+            }
+        }
+        finally
+        {
+            mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+        }
+    }
+
+    private static bool TryGetListItemOrdinal(AutomationElement element, out int ordinal)
+    {
+        ordinal = -1;
+        if (element.Current.ControlType != ControlType.ListItem) return false;
+        var runtime = RuntimeIdentity(element);
+        var siblings = ListItemsFor(element);
+        ordinal = Array.FindIndex(siblings,
+            item => string.Equals(RuntimeIdentity(item), runtime, StringComparison.Ordinal));
+        return ordinal >= 0;
+    }
+
+    private static AutomationElement[] ListItemsFor(AutomationElement element)
+    {
+        var list = NearestList(element)
+            ?? throw new InvalidOperationException("TARGET_MISMATCH: list container is unavailable.");
+        if (list.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
+        {
+            var scroll = ((ScrollPattern)scrollPattern).Current;
+            if (scroll.VerticallyScrollable || scroll.HorizontallyScrollable)
+                throw new InvalidOperationException("TARGET_MISMATCH: the complete order of a scrollable list is not safely observable.");
+        }
+        var listRuntime = RuntimeIdentity(list);
+        return list.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem))
+            .Cast<AutomationElement>()
+            .Where(item => NearestList(item) is { } owner
+                && string.Equals(RuntimeIdentity(owner), listRuntime, StringComparison.Ordinal))
+            .ToArray();
+    }
+
+    private static AutomationElement? NearestList(AutomationElement element)
+    {
+        var current = TreeWalker.ControlViewWalker.GetParent(element);
+        while (current is not null)
+        {
+            if (current.Current.ControlType == ControlType.List) return current;
+            current = TreeWalker.ControlViewWalker.GetParent(current);
+        }
+        return null;
+    }
+
+    private static string RuntimeIdentity(AutomationElement element) =>
+        string.Join('.', element.GetRuntimeId());
 
     private static byte[] CaptureJpeg(IntPtr window, int quality)
     {

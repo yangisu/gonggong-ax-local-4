@@ -249,22 +249,47 @@ public static class RecordedSemanticWorkflowExtractor
 
             if (current.Event.ActionKind == MacroActionKind.MouseDrag)
             {
-                RequireRangeDragEvidence(current.Event);
+                if (current.Event.SemanticBefore is null || current.Event.SemanticTarget is null)
+                    throw new InvalidOperationException($"이벤트 {current.Event.Sequence}에 드래그 의미 증거가 없습니다.");
                 var after = current.Event.SemanticAfter
-                    ?? throw new InvalidOperationException("드래그 뒤 의미 범위 값을 확인할 수 없습니다.");
+                    ?? throw new InvalidOperationException("드래그 뒤 의미 상태를 확인할 수 없습니다.");
                 var beforeValue = TargetValue(current.Event.SemanticBefore!, current.Event.SemanticTarget!);
                 var afterValue = TargetValue(after, current.Event.SemanticTarget!);
-                if (!SemanticRangeValue.TryParse(beforeValue, out var initial)
-                    || !SemanticRangeValue.TryParse(afterValue, out var final)
-                    || initial == final)
-                    throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 드래그 결과 값을 의미적으로 확인할 수 없습니다.");
-                units.Add(new ExtractedUnit(
-                    [current],
-                    "set-range",
-                    current.Event.SemanticTarget!,
-                    SemanticRangeValue.Format(final),
-                    current.Event.SemanticBefore!,
-                    after));
+                if (current.Event.SemanticTarget!.Roles.Any(role => role == "Slider"))
+                {
+                    RequireRangeDragEvidence(current.Event);
+                    if (!SemanticRangeValue.TryParse(beforeValue, out var initial)
+                        || !SemanticRangeValue.TryParse(afterValue, out var final)
+                        || initial == final)
+                        throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 드래그 결과 값을 의미적으로 확인할 수 없습니다.");
+                    units.Add(new ExtractedUnit(
+                        [current],
+                        "set-range",
+                        current.Event.SemanticTarget!,
+                        SemanticRangeValue.Format(final),
+                        current.Event.SemanticBefore!,
+                        after));
+                }
+                else if (current.Event.SemanticTarget.Roles.Any(role => role == "ListItem"))
+                {
+                    RequireReorderDragEvidence(current.Event);
+                    if (!SemanticOrdinalValue.TryParse(beforeValue, out var initial)
+                        || !SemanticOrdinalValue.TryParse(afterValue, out var final)
+                        || initial == final)
+                        throw new InvalidOperationException($"이벤트 {current.Event.Sequence}의 목록 순서 변경 결과를 의미적으로 확인할 수 없습니다.");
+                    units.Add(new ExtractedUnit(
+                        [current],
+                        "reorder-item",
+                        current.Event.SemanticTarget,
+                        SemanticOrdinalValue.Format(final),
+                        current.Event.SemanticBefore!,
+                        after));
+                }
+                else
+                {
+                    throw new InvalidOperationException(
+                        $"이벤트 {current.Event.Sequence}는 의미 값이 있는 슬라이더 또는 목록 재정렬 드래그가 아닙니다.");
+                }
                 index++;
                 continue;
             }
@@ -479,6 +504,18 @@ public static class RecordedSemanticWorkflowExtractor
             throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 드래그는 자동 변환하지 않습니다.");
         if (!item.SemanticTarget.Roles.Any(role => role == "Slider"))
             throw new InvalidOperationException($"이벤트 {item.Sequence}는 의미 값을 제공하는 슬라이더 드래그가 아닙니다.");
+    }
+
+    private static void RequireReorderDragEvidence(RecordedEvent item)
+    {
+        if (item.SemanticBefore is null || item.SemanticAfter is null || item.SemanticTarget is null)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}에 목록 재정렬 전후 의미 증거가 없습니다.");
+        if (item.DragButton != MouseButton.Button1)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 목록 재정렬은 왼쪽 버튼 드래그만 지원합니다.");
+        if (item.ModifierKeyCodes.Length > 0)
+            throw new InvalidOperationException($"이벤트 {item.Sequence}의 수정키 결합 드래그는 자동 변환하지 않습니다.");
+        if (!item.SemanticTarget.Roles.Any(role => role == "ListItem"))
+            throw new InvalidOperationException($"이벤트 {item.Sequence}는 의미 목록 항목 재정렬 드래그가 아닙니다.");
     }
 
     private static bool SameTextTarget(RecordedEvent first, RecordedEvent second) =>

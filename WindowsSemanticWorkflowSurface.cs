@@ -283,6 +283,11 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
             case "focus":
                 element.SetFocus();
                 break;
+            case "reorder-item":
+                if (!SemanticOrdinalValue.TryParse(action.Value, out var ordinal))
+                    throw new InvalidOperationException("목록 순서 값이 올바르지 않습니다.");
+                ReorderListItem(element, ordinal);
+                break;
             default:
                 throw new InvalidOperationException($"지원하지 않는 의미 동작입니다: {action.Kind}");
         }
@@ -420,6 +425,8 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
                 return ((TogglePattern)togglePattern).Current.ToggleState.ToString();
             if (element.TryGetCurrentPattern(RangeValuePattern.Pattern, out var rangePattern))
                 return ((RangeValuePattern)rangePattern).Current.Value.ToString("R", CultureInfo.InvariantCulture);
+            if (TryGetListItemOrdinal(element, out var ordinal))
+                return SemanticOrdinalValue.FormatEvidence(ordinal);
             if (element.TryGetCurrentPattern(SelectionPattern.Pattern, out var selectionPattern))
             {
                 var selection = ((SelectionPattern)selectionPattern).Current.GetSelection()
@@ -503,6 +510,97 @@ public sealed class WindowsSemanticWorkflowSurface : ISemanticWorkflowSurface
         if (!SetCursorPos(x, y)) throw new InvalidOperationException("마우스 포인터를 의미 대상에 이동하지 못했습니다.");
         mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
         mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+    }
+
+    private static void ReorderListItem(AutomationElement element, int finalOrdinal)
+    {
+        var siblings = ListItemsFor(element);
+        if (siblings.Length < 2 || finalOrdinal >= siblings.Length)
+            throw new InvalidOperationException("TARGET_MISMATCH: 요청한 목록 위치가 현재 목록 범위를 벗어났습니다.");
+        var runtime = RuntimeIdentity(element);
+        var currentOrdinal = Array.FindIndex(siblings,
+            item => string.Equals(RuntimeIdentity(item), runtime, StringComparison.Ordinal));
+        if (currentOrdinal < 0)
+            throw new InvalidOperationException("TARGET_MISMATCH: 이동할 항목이 현재 목록에 없습니다.");
+        if (currentOrdinal == finalOrdinal)
+            throw new InvalidOperationException("TARGET_MISMATCH: 목록 항목이 이미 요청한 위치에 있습니다.");
+        var destination = siblings[finalOrdinal];
+        if (destination.Current.IsOffscreen)
+        {
+            if (!destination.TryGetCurrentPattern(ScrollItemPattern.Pattern, out var scroll))
+                throw new InvalidOperationException("TARGET_MISMATCH: 목표 목록 위치를 화면에 표시할 수 없습니다.");
+            ((ScrollItemPattern)scroll).ScrollIntoView();
+            Thread.Sleep(150);
+        }
+        var sourceBounds = element.Current.BoundingRectangle;
+        var destinationBounds = destination.Current.BoundingRectangle;
+        if (sourceBounds.IsEmpty || destinationBounds.IsEmpty
+            || sourceBounds.Width <= 1 || sourceBounds.Height <= 1
+            || destinationBounds.Width <= 1 || destinationBounds.Height <= 1)
+            throw new InvalidOperationException("TARGET_MISMATCH: 목록 재정렬 드래그 영역을 확인할 수 없습니다.");
+        var startX = checked((int)Math.Round(sourceBounds.Left + sourceBounds.Width / 2));
+        var startY = checked((int)Math.Round(sourceBounds.Top + sourceBounds.Height / 2));
+        var endX = checked((int)Math.Round(destinationBounds.Left + destinationBounds.Width / 2));
+        var endY = checked((int)Math.Round(destinationBounds.Top + destinationBounds.Height / 2));
+        if (!SetCursorPos(startX, startY))
+            throw new InvalidOperationException("목록 항목으로 마우스 포인터를 이동하지 못했습니다.");
+        mouse_event(MouseeventfLeftdown, 0, 0, 0, UIntPtr.Zero);
+        try
+        {
+            for (var step = 1; step <= 10; step++)
+            {
+                var x = startX + (endX - startX) * step / 10;
+                var y = startY + (endY - startY) * step / 10;
+                if (!SetCursorPos(x, y))
+                    throw new InvalidOperationException("목록 재정렬 경로로 마우스 포인터를 이동하지 못했습니다.");
+                Thread.Sleep(25);
+            }
+        }
+        finally
+        {
+            mouse_event(MouseeventfLeftup, 0, 0, 0, UIntPtr.Zero);
+        }
+    }
+
+    private static bool TryGetListItemOrdinal(AutomationElement element, out int ordinal)
+    {
+        ordinal = -1;
+        if (element.Current.ControlType != ControlType.ListItem) return false;
+        var runtime = RuntimeIdentity(element);
+        var siblings = ListItemsFor(element);
+        ordinal = Array.FindIndex(siblings,
+            item => string.Equals(RuntimeIdentity(item), runtime, StringComparison.Ordinal));
+        return ordinal >= 0;
+    }
+
+    private static AutomationElement[] ListItemsFor(AutomationElement element)
+    {
+        var list = NearestList(element)
+            ?? throw new InvalidOperationException("TARGET_MISMATCH: 목록 항목의 컨테이너를 확인할 수 없습니다.");
+        if (list.TryGetCurrentPattern(ScrollPattern.Pattern, out var scrollPattern))
+        {
+            var scroll = ((ScrollPattern)scrollPattern).Current;
+            if (scroll.VerticallyScrollable || scroll.HorizontallyScrollable)
+                throw new InvalidOperationException("TARGET_MISMATCH: 일부 항목만 표시된 스크롤 목록의 전체 순서는 안전하게 확인할 수 없습니다.");
+        }
+        var listRuntime = RuntimeIdentity(list);
+        return list.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem))
+            .Cast<AutomationElement>()
+            .Where(item => NearestList(item) is { } owner
+                && string.Equals(RuntimeIdentity(owner), listRuntime, StringComparison.Ordinal))
+            .ToArray();
+    }
+
+    private static AutomationElement? NearestList(AutomationElement element)
+    {
+        var current = TreeWalker.ControlViewWalker.GetParent(element);
+        while (current is not null)
+        {
+            if (current.Current.ControlType == ControlType.List) return current;
+            current = TreeWalker.ControlViewWalker.GetParent(current);
+        }
+        return null;
     }
 
     private static void SelectUniqueOption(AutomationElement element, string option)
